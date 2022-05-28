@@ -1,0 +1,13 @@
+name = "FindShift"
+uuid = "643ec891-bf64-479f-8088-26ff5ce1b396"
+authors = ["RainerHeintzmann <heintzmann@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+FourierTools = "b18b359b-aebc-45ac-a139-9c0ccbb2871e"
+IndexFunArrays = "613c443e-d742-454e-bfc6-1d7f8dd76566"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+NDTools = "98581153-e998-4eef-8d0d-5ec2c052313d"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
+Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
