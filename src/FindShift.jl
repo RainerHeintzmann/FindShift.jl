@@ -111,7 +111,7 @@ Uses an iterative peak optimization to localize the peak to sub-pixel precision.
 struct FindIter <: FindMethod end
 
 
-function find_ft_iter(dat, k_est; exclude_zero=true, max_range=2.1)
+function find_ft_iter(dat, k_est; max_range=nothing)
     win = 1.0 # collect(window_hanning(size(dat), border_in=0.0))
     v_init = sqrt(abs2_ft_peak(win .* dat, k_est))
     mynorm(x) = -abs2_ft_peak(win .* dat ./ v_init, x)  # to normalize the data appropriately
@@ -124,7 +124,7 @@ function find_ft_iter(dat, k_est; exclude_zero=true, max_range=2.1)
     od = OnceDifferentiable(mynorm, g!, k_est)
     #@show fieldnames(typeof(od))
     res = let
-        if false
+        if !isnothing(max_range)
             lower = k_est .- max_range
             upper = k_est .+ max_range
             @time optimize(od,lower, upper, k_est, Fminbox(), Optim.Options(show_trace=false, x_tol = 1e-2)) # {GradientDescent}, , g_tol=1e-3
@@ -139,18 +139,23 @@ end
 
 
 """
-    find_ft_peak(dat, k_est=nothing, ignore_zero=true, dims=(1,2))
-    localizes the peak in Fourier-space with sub-pixel accuracy using an iterative fitting routine.
+find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
+localizes the peak in Fourier-space with sub-pixel accuracy using an iterative fitting routine.
 
 # Arguments
 + dat:  data
 + k_est: a starting value for the peak-position. Needs to be accurate enough such that a gradient-based search can be started with this value
         If `nothing` is provided, an FFT will be performed and a maximum is chosen. 
++ method: defines which method to use for finding the maximum. Current options: `:FindZoomFT` or `:FindIter`
++ interactive: a boolean defining whether to use user-interaction to define the approximate peak position. Only used if `k_est` is `nothing`.
 + ignore_zero: if `true`, the zero position will be ignored. Only used if `!isnothing(k_est)`.
 + max_range: maximal search range for the iterative optimization to be used as a box-constraint for the `Optim` package.
 + overwrite: if `false` the previously saved interactive click position will be used. If `true` the previous value is irnored and the user is asked to click again.
++ max_range: maximal search range to look for in the +/- direction. Default: `nothing`, which does not restrict the local search range.
++ exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
++ scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
 """
-function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT, interactive=true, overwrite=true, exclude_zero=true, max_range=2.1, scale=40, abs_first=true, roi_size=10)
+function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
     fdat = ft(dat)
     k_est = let
         if isnothing(k_est)
