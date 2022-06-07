@@ -2,7 +2,6 @@ module FindShift
 export abs2_ft_peak, sum_exp_shift, find_ft_peak, correlate, beautify, get_subpixel_peak, align_stack
 
 using FourierTools, IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore, Statistics
-using View5D # for get_positions
 
 # add FourierTools,IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore
 # add View5D, TestImages, Noise, FiniteDifferences
@@ -18,14 +17,14 @@ function sum_exp_shift(dat, k_0)
     sz = size(dat)
     mymid = (sz.÷2).+1
     pvec = k_0 ./ sz;
-    sum(dat[p] * exp((1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
+    sum(dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
 end
 
 function sum_exp_shift_ix(dat, k_0)
     sz = size(dat)
     mymid = (sz.÷2).+1
     pvec = k_0 ./ sz;
-    accumulate(.+, dat[p] .* Tuple(p) .* exp((1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
+    accumulate(.+, dat[p] .* Tuple(p) .* exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
 end
 
 """
@@ -46,7 +45,7 @@ end
             # @show abs2(Y)
             sum_dr_cos_di_sin = sum_di_cos_dr_sin  = zero(eltype(k_cur)); 
             sum_xdr_sin_xdi_cos = sum_xdi_sin_xdr_cos = zeros(eltype(k_cur), length(k_cur))
-            pvec = 2pi .*Vector(k_cur) ./ sz;
+            pvec = -2pi .*Vector(k_cur) ./ sz;
             mymid = (sz.÷2).+1
             sp = coskx = sinkx = dr = di = zero(eltype(k_cur))        
             for p in CartesianIndices(dat)
@@ -63,13 +62,13 @@ end
                 sum_xdr_sin_xdi_cos .-= (2pi .* x./sz) .* di_cos_dr_sin # 
                 sum_xdi_sin_xdr_cos .+= (2pi .* x./sz) .* dr_cos_di_sin # (x./sz)
             end
-            res = 2 .*(sum_dr_cos_di_sin.*sum_xdr_sin_xdi_cos .+ sum_di_cos_dr_sin.*sum_xdi_sin_xdr_cos)
+            res = -2 .*(sum_dr_cos_di_sin.*sum_xdr_sin_xdi_cos .+ sum_di_cos_dr_sin.*sum_xdi_sin_xdr_cos)
             # @show barx .* res
             #@show Vector(barx .* res)
             #@show barx
             #@show k_cur
             # return zero(eltype(dat)), zeros(eltype(dat), size(dat)) , Vector(barx .* res)
-            return NoTangent(), (ChainRulesCore.@not_implemented "Save computation"), barx .* res
+            return NoTangent(), NoTangent(), barx .* res # (ChainRulesCore.@not_implemented "Save computation"), 
         end
     end
    # @show abs2(Y)
@@ -111,25 +110,38 @@ Uses an iterative peak optimization to localize the peak to sub-pixel precision.
 struct FindIter <: FindMethod end
 
 
-function find_ft_iter(dat, k_est; max_range=nothing)
+function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing)
     win = 1.0 # collect(window_hanning(size(dat), border_in=0.0))
     v_init = sqrt(abs2_ft_peak(win .* dat, k_est))
-    mynorm(x) = -abs2_ft_peak(win .* dat ./ v_init, x)  # to normalize the data appropriately
+    wdat = win .* dat ./ v_init
+
+    k_est = let
+        if isnothing(k_est)
+            find_max(abs.(ft(wdat)), exclude_zero=exclude_zero)
+        else
+            k_est
+        end
+    end
+    @show k_est
+
+    mynorm2(x) = -abs2_ft_peak(wdat, x)  # to normalize the data appropriately
     #@show mynorm(k_est)
     #@show typeof(k_est)
     #@show mygrad(k_est)
     function g!(G, x)  # (G, x)
-        G .= gradient(mynorm,x)[1]
+        G .= gradient(mynorm2,x)[1]
     end
-    od = OnceDifferentiable(mynorm, g!, k_est)
+    od = OnceDifferentiable(mynorm2, k_est; autodiff = :forward);
+    # od = OnceDifferentiable(mynorm2, g!, k_est)
     #@show fieldnames(typeof(od))
     res = let
         if !isnothing(max_range)
             lower = k_est .- max_range
             upper = k_est .+ max_range
-            @time optimize(od,lower, upper, k_est, Fminbox(), Optim.Options(show_trace=false, x_tol = 1e-2)) # {GradientDescent}, , g_tol=1e-3
+            @time optimize(od,lower, upper, k_est, Fminbox(), Optim.Options(show_trace=true, g_tol=1e-3)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
         else
-            @time optimize(od, k_est, LBFGS(), Optim.Options(show_trace=false, x_tol = 1e-2)) #NelderMead(), iterations=2, g_tol=1e-3
+            @time optimize(od, k_est, LBFGS(), Optim.Options(show_trace=true, g_tol=1e-3)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
+            # @time optimize(mynorm2, g!, k_est, LBFGS(), Optim.Options(show_trace=true)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
         end
     end
     # Optim.minimizer(res), mynorm(Optim.minimizer(res))
@@ -345,7 +357,7 @@ function get_subpixel_patch(cor, p_est; scale=10, roi_size=4)
     return roi
 end
 
-function get_subpixel_peak(cor, p_est=nothing; exclude_zero=true, scale=10, roi_size=4, abs_first=true, dim=3)
+function get_subpixel_peak(cor, p_est=nothing; exclude_zero=true, scale=10, roi_size=4, abs_first=false, dim=3)
     p_est = let
         if isnothing(p_est)
             find_max(cor, exclude_zero=exclude_zero)
