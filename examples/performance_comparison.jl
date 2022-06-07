@@ -56,16 +56,16 @@ function test_iter()
     x = 9:0.01:11
     f(x) = mynorm([x,22.3])
     g(x) = mynorm([10.2,x])
-    plot(x,f.(x))
+    plot(x,f.(x),label="x")
     x1 = 21:0.01:23
-    plot!(x1,g.(x1))
+    plot!(x1,g.(x1),label="y")
 
     ff(x) = gradient(mynorm, [x, 22.3])[1][1]
     gg(x) = gradient(mynorm, [10.2, x])[1][2]
     gg2(x) = grad(central_fdm(5, 1), mynorm, [10.2, x])[1][2]
-    plot(x,ff.(x))
-    plot!(x1,gg.(x1))
-    plot!(x1,gg2.(x1))
+    plot(x,ff.(x), label="dL/dx")
+    plot!(x1,gg.(x1), label="dL/dy")
+    plot!(x1,gg2.(x1), label="dL/dy finite diff")
 end
 
 function compare_performance_cos(N=20)
