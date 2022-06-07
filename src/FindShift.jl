@@ -131,8 +131,8 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing)
     function g!(G, x)  # (G, x)
         G .= gradient(mynorm2,x)[1]
     end
-    od = OnceDifferentiable(mynorm2, k_est; autodiff = :forward);
-    # od = OnceDifferentiable(mynorm2, g!, k_est)
+    # od = OnceDifferentiable(mynorm2, k_est; autodiff = :forward);
+    od = OnceDifferentiable(mynorm2, g!, k_est)
     #@show fieldnames(typeof(od))
     res = let
         if !isnothing(max_range)
