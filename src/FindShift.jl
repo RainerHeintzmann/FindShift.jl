@@ -110,7 +110,7 @@ Uses an iterative peak optimization to localize the peak to sub-pixel precision.
 struct FindIter <: FindMethod end
 
 
-function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing)
+function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false)
     win = 1.0 # collect(window_hanning(size(dat), border_in=0.0))
     v_init = sqrt(abs2_ft_peak(win .* dat, k_est))
     wdat = win .* dat ./ v_init
@@ -122,7 +122,6 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing)
             k_est
         end
     end
-    @show k_est
 
     mynorm2(x) = -abs2_ft_peak(wdat, x)  # to normalize the data appropriately
     #@show mynorm(k_est)
@@ -138,9 +137,9 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing)
         if !isnothing(max_range)
             lower = k_est .- max_range
             upper = k_est .+ max_range
-            @time optimize(od,lower, upper, k_est, Fminbox(), Optim.Options(show_trace=true, g_tol=1e-3)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
+            @time optimize(od,lower, upper, k_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
         else
-            @time optimize(od, k_est, LBFGS(), Optim.Options(show_trace=true, g_tol=1e-3)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
+            @time optimize(od, k_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
             # @time optimize(mynorm2, g!, k_est, LBFGS(), Optim.Options(show_trace=true)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
         end
     end
@@ -167,7 +166,7 @@ localizes the peak in Fourier-space with sub-pixel accuracy using an iterative f
 + exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
 + scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
 """
-function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
+function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
     fdat = ft(dat)
     k_est = let
         if isnothing(k_est)
@@ -186,7 +185,7 @@ function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, intera
         k_est = Tuple(round.(Int, k_est))
         return get_subpixel_peak(fdat, k_est, scale=scale, exclude_zero=exclude_zero, abs_first=abs_first, roi_size=roi_size)
     elseif method == :FindIter
-        return find_ft_iter(fdat, k_est; exclude_zero=exclude_zero, max_range=max_range);
+        return find_ft_iter(dat, k_est; exclude_zero=exclude_zero, max_range=max_range);
     else
         error("Unknown method for localizing peak. Use :FindZoomFT or :FindIter")
     end

@@ -7,11 +7,11 @@ using View5D # for get_positions
 
 export peak_compare
 
-function peak_compare(myk = nothing;method=:FindIter)
+function peak_compare(myk = nothing; method=:FindIter, NPhot =100)
         # a test for a pure sine wave        
         myk = let
             if isnothing(myk)
-                200.0 .* (rand(2) .- 0.5)
+                100.0 .* (rand(2))  #  .- 0.5
             else
                 myk
             end
@@ -21,9 +21,10 @@ function peak_compare(myk = nothing;method=:FindIter)
         #@vv ft(mysin)
         # abs2_ft_peak(mysin, myk .+ (0.0,-0.5))
         win = collect(window_hanning(size(mysin), border_in=0.0)) # helps a bit. 
-
-        p =find_ft_peak(win .* mysin, interactive=false, method=method, abs_first=false, scale=60) # abs_first=true has a problem!
-        return myk, myk .- p
+        dat = real.(mysin)
+        ndat = poisson(dat ./ maximum(dat) * NPhot)
+        p =find_ft_peak(win .* ndat, interactive=false, method=method, abs_first=false, scale=60) # abs_first=true has a problem!
+        return myk, myk .- abs.(p)
 end
 
 function test_iter()
@@ -53,6 +54,17 @@ function test_iter()
     gradient(mynorm, myk)[1]
     gradient(mynorm, p)[1]
 
+    function g!(G, x)  # (G, x)
+        G .= gradient(mynorm,x)[1]
+    end
+
+    od = OnceDifferentiable(mynorm, g!, k_est)
+    @time res=optimize(od, k_est, LBFGS(), Optim.Options(show_trace=true, g_tol=1e-3)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
+    res.minimizer
+
+    FindShift.find_ft_iter(dat, k_est; exclude_zero=true, max_range=nothing)
+    FindShift.find_ft_peak(dat, k_est; method=:FindIter, exclude_zero=true, max_range=nothing)
+
     x = 9:0.01:11
     f(x) = mynorm([x,22.3])
     g(x) = mynorm([10.2,x])
@@ -70,15 +82,21 @@ end
 
 function compare_performance_cos(N=20)
 
-        Random.seed!(3)
         myerr = []
+        myerr_iter = []
+        NPhot = 50
+        N = 50
         for n=1:N
-            # pos, err = peak_compare(method=:FindZoomFT)  # 0.011349
-            pos, err = peak_compare(method=:FindIter)
+            Random.seed!(n)
+            pos, err = peak_compare(method=:FindZoomFT, NPhot=NPhot)  # 0.0044
             push!(myerr, err)
+            Random.seed!(n)
+            pos, err = peak_compare(method=:FindIter, NPhot=NPhot) # 5.64 e-5
+            push!(myerr_iter, err)
         end
 
         mystd = mean(std(myerr)) 
+        mystd_iter = mean(std(myerr_iter)) 
 
         mypeak = ft2d(mysin .* window_hanning(size(mysin), border_in=(0,0)))
         res = get_subpixel_peak(mypeak,(0,-100), scale=(10,10))    
