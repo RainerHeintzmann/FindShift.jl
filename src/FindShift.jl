@@ -1,5 +1,5 @@
 module FindShift
-export abs2_ft_peak, sum_exp_shift, find_ft_peak, correlate, beautify, get_subpixel_peak, align_stack
+export abs2_ft_peak, sum_exp_shift, find_ft_peak, correlate, beautify, get_subpixel_peak, align_stack, optim_correl
 
 using FourierTools, IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore, Statistics
 
@@ -112,7 +112,7 @@ struct FindIter <: FindMethod end
 
 
 function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false)
-    win = 1.0 # collect(window_hanning(size(dat), border_in=0.0))
+    win = collect(window_hanning(size(dat), border_in=0.0))
     v_init = sqrt(abs2_ft_peak(win .* dat, k_est))
     wdat = win .* dat ./ v_init
 
@@ -138,9 +138,9 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, 
         if !isnothing(max_range)
             lower = k_est .- max_range
             upper = k_est .+ max_range
-            @time optimize(od,lower, upper, k_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
+            @time optimize(od,lower, upper, k_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
         else
-            @time optimize(od, k_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
+            @time optimize(od, k_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
             # @time optimize(mynorm2, g!, k_est, LBFGS(), Optim.Options(show_trace=true)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
         end
     end
@@ -167,7 +167,7 @@ localizes the peak in Fourier-space with sub-pixel accuracy using an iterative f
 + exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
 + scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
 """
-function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
+function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10, verbose=true)
     fdat = ft(dat)
     k_est = let
         if isnothing(k_est)
@@ -186,7 +186,7 @@ function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT, interactive=false,
         k_est = Tuple(round.(Int, k_est))
         return get_subpixel_peak(fdat, k_est, scale=scale, exclude_zero=exclude_zero, abs_first=abs_first, roi_size=roi_size)
     elseif method == :FindIter
-        return find_ft_iter(dat, k_est; exclude_zero=exclude_zero, max_range=max_range);
+        return find_ft_iter(dat, k_est; exclude_zero=exclude_zero, max_range=max_range, verbose=verbose);
     else
         error("Unknown method for localizing peak. Use :FindZoomFT or :FindIter")
     end
@@ -256,21 +256,23 @@ function all_correl_strengths(k_cur, dat, other=dat)
     sum(abs.(correl_at(k_cur, dat, other)))  # sum of all correlations
 end
 
-function optim_correl(k_est, dat, other=dat)
-    mynorm(x) = - all_correl_strengths(x, dat, other)
-    #@show k_est
-    lower = k_est .- 2.1
-    upper = k_est .+ 2.1
-    #@show mynorm(k_est)
-    mygrad(x) = gradient(mynorm,x)[1]
-    #@show mygrad(k_est)
-    function g!(G, x)
-        G .= mygrad(x)
+function optim_correl(dat, other=dat; k_est = nothing, method=:FindZoomFT, verbose=false)
+    if true
+        find_ft_peak(dat .* conj.(other), method=method, verbose=verbose)
+    else # old version below
+        mynorm(x) = - all_correl_strengths(x, dat, other)
+        #@show k_est
+        lower = k_est .- 2.1
+        upper = k_est .+ 2.1
+        mygrad(x) = gradient(mynorm,x)[1]
+        function g!(G, x)
+            G .= mygrad(x)
+        end
+        od = OnceDifferentiable(mynorm, g!, k_est)
+        res = optimize(od,lower, upper, k_est, Fminbox()) # {GradientDescent}
+        # res = optimize(mynorm, k_est, LBFGS()) #NelderMead()
+        Optim.minimizer(res)
     end
-    od = OnceDifferentiable(mynorm, g!, k_est)
-    res = optimize(od,lower, upper, k_est, Fminbox()) # {GradientDescent}
-    # res = optimize(mynorm, k_est, LBFGS()) #NelderMead()
-    Optim.minimizer(res)
 end
 
 """
@@ -380,9 +382,9 @@ function get_subpixel_peak(cor, p_est=nothing; exclude_zero=true, scale=10, roi_
 end
 
 
-function get_subpixel_correl(k_est, dat; other=nothing, psf=psf, upsample=true)
+function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsample=true)
     up, up_other = prepare_correlation(dat; upsample=upsample, other=other, psf=psf)    
-    optim_correl(k_est, up, up_other)
+    optim_correl(up, up_other, k_est=k_est)
 end
 
 # hf enhancement for better visualization and peak finding

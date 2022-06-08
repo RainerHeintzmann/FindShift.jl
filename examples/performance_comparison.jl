@@ -7,24 +7,38 @@ using View5D # for get_positions
 
 export peak_compare
 
-function peak_compare(myk = nothing; method=:FindIter, NPhot =100)
+function peak_compare(myk = nothing; obj = nothing, method=:FindIter, NPhot =100)
         # a test for a pure sine wave        
         myk = let
             if isnothing(myk)
-                100.0 .* (rand(2))  #  .- 0.5
+                100.0 .* rand(2)  #  .- 0.5
             else
                 myk
             end
         end
-        sz = (512,512)
+        sz = let 
+            if isnothing(obj)
+                (512,512)
+            else
+                size(obj)
+            end            
+        end
         mysin = exp.(2pi.*1im.*(xx(sz) .* myk[1]./sz[1] .+ yy(sz) .* myk[2]./sz[2]));
+        win = collect(window_hanning(sz, border_in=0.0)) # helps a bit. 
         #@vv ft(mysin)
         # abs2_ft_peak(mysin, myk .+ (0.0,-0.5))
-        dat = real.(1.0 .+ mysin)
-        ndat = poisson(dat ./ maximum(dat) * NPhot)
-        win = collect(window_hanning(size(mysin), border_in=0.0)) # helps a bit. 
-        p =find_ft_peak(win .* (ndat .- mean(ndat)), interactive=false, method=method, exclude_zero=true, abs_first=false, scale=60) # abs_first=true has a problem!
-        @show p
+        if isnothing(obj)
+            dat = real.(1.0 .+ mysin)
+            fak =  NPhot ./ maximum(dat)
+            ndat = poisson(dat .* fak)
+            p =find_ft_peak(win .* (ndat .- mean(ndat)), interactive=false, method=method, exclude_zero=true, abs_first=false, scale=60) # abs_first=true has a problem!
+        else
+            dat = obj .* real.(1.0 .+ mysin)
+            fak =  NPhot ./ maximum(dat)
+            ndat = poisson(dat .* fak)
+            wdat = win .* (ndat .- fak .* obj)
+            p =optim_correl(wdat, obj .- mean(obj), method=method, verbose=true) # abs_first=true has a problem!
+        end
         return myk, myk .- abs.(p)
 end
 
@@ -81,18 +95,19 @@ function test_iter()
     plot!(x1,gg2.(x1), label="dL/dy finite diff")
 end
 
-function compare_performance_cos(N=20)
+function compare_performance_cos()
 
         myerr = []
         myerr_iter = []
         NPhot = 50
         N = 50
+        obj = nothing # Float32.(testimage("resolution_test_512.tif"));
         for n=1:N
             Random.seed!(n)
-            pos, err = peak_compare(method=:FindZoomFT, NPhot=NPhot)  # 0.0044
+            pos, err = peak_compare(method=:FindZoomFT, NPhot=NPhot, obj=obj)  # 0.0044
             push!(myerr, err)
             Random.seed!(n)
-            pos, err = peak_compare(method=:FindIter, NPhot=NPhot) # 5.64 e-5
+            pos, err = peak_compare(method=:FindIter, NPhot=NPhot, obj=obj) # 5.64 e-5
             push!(myerr_iter, err)
         end
 
