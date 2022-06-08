@@ -81,6 +81,7 @@ function find_max(dat; exclude_zero=true)
     if exclude_zero
         arr[mid...] = 0
     end
+    arr[mid...] 
     m,p = findmax(arr)
     Tuple(p) .- mid
 end

@@ -20,10 +20,11 @@ function peak_compare(myk = nothing; method=:FindIter, NPhot =100)
         mysin = exp.(2pi.*1im.*(xx(sz) .* myk[1]./sz[1] .+ yy(sz) .* myk[2]./sz[2]));
         #@vv ft(mysin)
         # abs2_ft_peak(mysin, myk .+ (0.0,-0.5))
-        win = collect(window_hanning(size(mysin), border_in=0.0)) # helps a bit. 
-        dat = real.(mysin)
+        dat = real.(1.0 .+ mysin)
         ndat = poisson(dat ./ maximum(dat) * NPhot)
-        p =find_ft_peak(win .* ndat, interactive=false, method=method, abs_first=false, scale=60) # abs_first=true has a problem!
+        win = collect(window_hanning(size(mysin), border_in=0.0)) # helps a bit. 
+        p =find_ft_peak(win .* (ndat .- mean(ndat)), interactive=false, method=method, exclude_zero=true, abs_first=false, scale=60) # abs_first=true has a problem!
+        @show p
         return myk, myk .- abs.(p)
 end
 
