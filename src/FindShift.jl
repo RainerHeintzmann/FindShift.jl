@@ -43,8 +43,8 @@ function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
         x .= Tuple(p) .- mymid
         sp = dot(pvec, x)
         s2 .= x .* (dat[p] .* exp.(-1im .* sp))
-        s2_r = real.(s2)
-        s2_i = imag.(s2)
+        s2_r .= real.(s2)
+        s2_i .= imag.(s2)
         res_i .+= s1_i.*s2_r .+ s1_r .* s2_i
     end
     res_i
