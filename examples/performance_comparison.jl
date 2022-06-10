@@ -28,12 +28,12 @@ function peak_compare(myk = nothing; obj = nothing, method=:FindIter, NPhot =100
         #@vv ft(mysin)
         # abs2_ft_peak(mysin, myk .+ (0.0,-0.5))
         if isnothing(obj)
-            dat = real.(1.0 .+ mysin)
+            dat = 1.0 .+ real.(mysin)
             fak =  NPhot ./ maximum(dat)
             ndat = poisson(dat .* fak)
             p =find_ft_peak(win .* (ndat .- mean(ndat)), interactive=false, method=method, exclude_zero=true, abs_first=false, scale=60) # abs_first=true has a problem!
         else
-            dat = obj .* real.(1.0 .+ mysin)
+            dat = obj .* (1.0 .+ real.(mysin))
             fak =  NPhot ./ maximum(dat)
             ndat = poisson(dat .* fak)
             wdat = win .* (ndat .- fak .* obj)
@@ -99,9 +99,9 @@ function compare_performance_cos()
 
         myerr = []
         myerr_iter = []
-        NPhot = 50
-        N = 50
-        obj = nothing # Float32.(testimage("resolution_test_512.tif"));
+        NPhot = 500000
+        N = 20
+        obj = Float32.(testimage("resolution_test_512.tif"));
         for n=1:N
             Random.seed!(n)
             pos, err = peak_compare(method=:FindZoomFT, NPhot=NPhot, obj=obj)  # 0.0044
