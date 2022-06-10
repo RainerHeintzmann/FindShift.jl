@@ -37,7 +37,7 @@ function peak_compare(myk = nothing; obj = nothing, method=:FindIter, NPhot =100
             fak =  NPhot ./ maximum(dat)
             ndat = poisson(dat .* fak)
             wdat = win .* (ndat .- fak .* obj)
-            p =optim_correl(wdat, obj .- mean(obj), method=method, verbose=true) # abs_first=true has a problem!
+            p =optim_correl(wdat, obj .- mean(obj), method=method, verbose=false) # abs_first=true has a problem!
         end
         return myk, myk .- abs.(p)
 end
