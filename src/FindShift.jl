@@ -27,6 +27,29 @@ function sum_exp_shift_ix(dat, k_0)
     accumulate(.+, dat[p] .* Tuple(p) .* exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
 end
 
+function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
+    mymid = (size(dat).÷2).+1
+    s1 = sum(conj(dat[p]) * exp(1im * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
+    s1_i = imag.(s1)
+    s1_r = real.(s1)
+    s2 = zeros(ComplexF64, D)
+    x = zeros(Float64, D)
+    res_i = zeros(Float64, D)
+    s2_r = zeros(Float64, D) 
+    s2_i = zeros(Float64, D) 
+
+    sp = zero(eltype(pvec)) 
+    for p in  CartesianIndices(dat)
+        x .= Tuple(p) .- mymid
+        sp = dot(pvec, x)
+        s2 .= x .* (dat[p] .* exp.(-1im .* sp))
+        s2_r = real.(s2)
+        s2_i = imag.(s2)
+        res_i .+= s1_i.*s2_r .+ s1_r .* s2_i
+    end
+    res_i
+end
+
 """
     abs2_ft_peak(dat, k_cur, dims=(1,2))
 estimates the complex value of a sub-pixel position defined by `k_cur` in the Fourier-transform of `dat`.
@@ -37,42 +60,50 @@ end
 
  # define custom adjoint for sum_exp_shift
  function ChainRulesCore.rrule(::typeof(abs2_ft_peak), dat, k_cur)
-    Y = sum_exp_shift(dat, k_cur)
+    # Y = sum_exp_shift(dat, k_cur)
+    Z = abs2_ft_peak(dat, k_cur)
 
     abs2_ft_peak_pullback = let sz = size(dat)
+        # function abs2_ft_peak_pullback(barx)
+        #     # @show k_cur
+        #     # @show abs2(Y)
+        #     sum_dr_cos_di_sin = sum_di_cos_dr_sin  = zero(eltype(k_cur)); 
+        #     sum_xdr_sin_xdi_cos = sum_xdi_sin_xdr_cos = zeros(eltype(k_cur), length(k_cur))
+        #     pvec = -2pi .*Vector(k_cur) ./ sz;
+        #     mymid = (sz.÷2).+1
+        #     sp = coskx = sinkx = dr = di = zero(eltype(k_cur))        
+        #     for p in CartesianIndices(dat)
+        #         x = Tuple(p) .- mymid
+        #         sp = dot(pvec, x)
+        #         coskx = cos(sp); 
+        #         sinkx = sin(sp);
+        #         dr = real(dat[p]); 
+        #         di = imag(dat[p]);
+        #         dr_cos_di_sin = dr*coskx - di*sinkx
+        #         di_cos_dr_sin = di*coskx + dr*sinkx
+        #         sum_dr_cos_di_sin += dr_cos_di_sin
+        #         sum_di_cos_dr_sin += di_cos_dr_sin
+        #         sum_xdr_sin_xdi_cos .-= (2pi .* x./sz) .* di_cos_dr_sin # 
+        #         sum_xdi_sin_xdr_cos .+= (2pi .* x./sz) .* dr_cos_di_sin # (x./sz)
+        #     end
+        #     res = -2 .*(sum_dr_cos_di_sin.*sum_xdr_sin_xdi_cos .+ sum_di_cos_dr_sin.*sum_xdi_sin_xdr_cos)
+        #     # @show barx .* res
+        #     #@show Vector(barx .* res)
+        #     #@show barx
+        #     #@show k_cur
+        #     # return zero(eltype(dat)), zeros(eltype(dat), size(dat)) , Vector(barx .* res)
+        #     return NoTangent(), NoTangent(), barx .* res # (ChainRulesCore.@not_implemented "Save computation"), 
         function abs2_ft_peak_pullback(barx)
-            # @show k_cur
-            # @show abs2(Y)
-            sum_dr_cos_di_sin = sum_di_cos_dr_sin  = zero(eltype(k_cur)); 
-            sum_xdr_sin_xdi_cos = sum_xdi_sin_xdr_cos = zeros(eltype(k_cur), length(k_cur))
-            pvec = -2pi .*Vector(k_cur) ./ sz;
-            mymid = (sz.÷2).+1
-            sp = coskx = sinkx = dr = di = zero(eltype(k_cur))        
-            for p in CartesianIndices(dat)
-                x = Tuple(p) .- mymid
-                sp = dot(pvec, x)
-                coskx = cos(sp); 
-                sinkx = sin(sp);
-                dr = real(dat[p]); 
-                di = imag(dat[p]);
-                dr_cos_di_sin = dr*coskx - di*sinkx
-                di_cos_dr_sin = di*coskx + dr*sinkx
-                sum_dr_cos_di_sin += dr_cos_di_sin
-                sum_di_cos_dr_sin += di_cos_dr_sin
-                sum_xdr_sin_xdi_cos .-= (2pi .* x./sz) .* di_cos_dr_sin # 
-                sum_xdi_sin_xdr_cos .+= (2pi .* x./sz) .* dr_cos_di_sin # (x./sz)
-            end
-            res = -2 .*(sum_dr_cos_di_sin.*sum_xdr_sin_xdi_cos .+ sum_di_cos_dr_sin.*sum_xdi_sin_xdr_cos)
-            # @show barx .* res
-            #@show Vector(barx .* res)
-            #@show barx
-            #@show k_cur
-            # return zero(eltype(dat)), zeros(eltype(dat), size(dat)) , Vector(barx .* res)
+            sz = size(dat)
+            pvec = 2pi .*Vector(k_cur) ./ sz;
+            res_i = sum_res_i(dat, pvec)
+            # res = 2 .*imag.(s1 .* s2) .* 2pi ./ sz
+            res = 2 .* res_i .* 2pi ./ sz
             return NoTangent(), NoTangent(), barx .* res # (ChainRulesCore.@not_implemented "Save computation"), 
         end
     end
    # @show abs2(Y)
-    return abs2(Y), abs2_ft_peak_pullback
+    return Z, abs2_ft_peak_pullback
 end
 
 function find_max(dat; exclude_zero=true)
@@ -113,8 +144,7 @@ struct FindIter <: FindMethod end
 
 function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false)
     win = collect(window_hanning(size(dat), border_in=0.0))
-    v_init = sqrt(abs2_ft_peak(win .* dat, k_est))
-    wdat = win .* dat ./ v_init
+    wdat = win .* dat 
 
     k_est = let
         if isnothing(k_est)
@@ -123,6 +153,9 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, 
             k_est
         end
     end
+    k_est = Float64.([k_est...])
+    v_init = sqrt(abs2_ft_peak(win .* dat, k_est))
+    wdat ./= v_init
 
     mynorm2(x) = -abs2_ft_peak(wdat, x)  # to normalize the data appropriately
     #@show mynorm(k_est)
@@ -131,6 +164,14 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, 
     function g!(G, x)  # (G, x)
         G .= gradient(mynorm2,x)[1]
     end
+    # x = -1:0.1:1; plot(x,[mynorm2(k_est .+ [0,p]) for p in x]); plot!(x,[mynorm2(k_est .+ [p,0]) for p=-1:0.1:1])
+    # plot(x,[gradient(mynorm2,(k_est .+ [0,p]))[1][2] for p in x]); plot!(x,[gradient(mynorm2,(k_est .+ [p,0]))[1][1] for p in x])
+    # ff(p) = gradient(mynorm2, k_est .+ [p,0])[1][1]
+    # ff2(p) = grad(central_fdm(5, 1), mynorm2, k_est .+ [p,0])[1][1]
+    # gg(p) = gradient(mynorm2, k_est .+ [0, p])[1][2]
+    # gg2(p) = grad(central_fdm(5, 1), mynorm2, k_est .+ [0, p])[1][2]
+    # plot(x,[gg(p) for p in x]); plot!(x,[gg2(p) for p in x]); 
+    # plot!(x,[ff(p) for p in x]); plot!(x,[ff2(p) for p in x])
     # od = OnceDifferentiable(mynorm2, k_est; autodiff = :forward);
     od = OnceDifferentiable(mynorm2, g!, k_est)
     #@show fieldnames(typeof(od))
