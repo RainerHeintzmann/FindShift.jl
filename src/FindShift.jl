@@ -1,7 +1,9 @@
 module FindShift
 export abs2_ft_peak, sum_exp_shift, find_ft_peak, correlate, beautify, get_subpixel_peak, align_stack, optim_correl
+export find_shift_iter, shift_cut
 
 using FourierTools, IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore, Statistics
+using FFTW
 
 # add FourierTools,IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore
 # add View5D, TestImages, Noise, FiniteDifferences
@@ -11,6 +13,13 @@ function exp_shift(sz, k_0)
     mymid = (sz.÷2).+1
     pvec = k_0 ./ sz;
     [exp((1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(sz)]
+end
+
+function exp_shift_dat(dat, k_0)
+    sz = size(dat)
+    mymid = (sz.÷2).+1
+    pvec = k_0 ./ sz;
+    [dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat)]
 end
 
 function sum_exp_shift(dat, k_0)
@@ -64,35 +73,6 @@ end
     Z = abs2_ft_peak(dat, k_cur)
 
     abs2_ft_peak_pullback = let sz = size(dat)
-        # function abs2_ft_peak_pullback(barx)
-        #     # @show k_cur
-        #     # @show abs2(Y)
-        #     sum_dr_cos_di_sin = sum_di_cos_dr_sin  = zero(eltype(k_cur)); 
-        #     sum_xdr_sin_xdi_cos = sum_xdi_sin_xdr_cos = zeros(eltype(k_cur), length(k_cur))
-        #     pvec = -2pi .*Vector(k_cur) ./ sz;
-        #     mymid = (sz.÷2).+1
-        #     sp = coskx = sinkx = dr = di = zero(eltype(k_cur))        
-        #     for p in CartesianIndices(dat)
-        #         x = Tuple(p) .- mymid
-        #         sp = dot(pvec, x)
-        #         coskx = cos(sp); 
-        #         sinkx = sin(sp);
-        #         dr = real(dat[p]); 
-        #         di = imag(dat[p]);
-        #         dr_cos_di_sin = dr*coskx - di*sinkx
-        #         di_cos_dr_sin = di*coskx + dr*sinkx
-        #         sum_dr_cos_di_sin += dr_cos_di_sin
-        #         sum_di_cos_dr_sin += di_cos_dr_sin
-        #         sum_xdr_sin_xdi_cos .-= (2pi .* x./sz) .* di_cos_dr_sin # 
-        #         sum_xdi_sin_xdr_cos .+= (2pi .* x./sz) .* dr_cos_di_sin # (x./sz)
-        #     end
-        #     res = -2 .*(sum_dr_cos_di_sin.*sum_xdr_sin_xdi_cos .+ sum_di_cos_dr_sin.*sum_xdi_sin_xdr_cos)
-        #     # @show barx .* res
-        #     #@show Vector(barx .* res)
-        #     #@show barx
-        #     #@show k_cur
-        #     # return zero(eltype(dat)), zeros(eltype(dat), size(dat)) , Vector(barx .* res)
-        #     return NoTangent(), NoTangent(), barx .* res # (ChainRulesCore.@not_implemented "Save computation"), 
         function abs2_ft_peak_pullback(barx)
             sz = size(dat)
             pvec = 2pi .*Vector(k_cur) ./ sz;
@@ -141,6 +121,88 @@ Uses an iterative peak optimization to localize the peak to sub-pixel precision.
 """
 struct FindIter <: FindMethod end
 
+function dist_sqr(dat1, dat2)
+    sum(abs2.(dat1 .- dat2))
+end
+
+function dist_anscombe(dat1, dat2)
+    sum(abs2.(sqrt.(dat1) .- sqrt.(dat2)))
+end
+
+"""
+    find_ft_shift_iter(fdat1, fdat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
+    finds the shift between two input images by minimizing the distance.
+    To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
+    Therefore `fdat1` and `fdat2` have to the the FFTs of the data. 
+    Returned is an estimate of the real space (subpixel) shift.
+
+    The first image is interpreted as the ground truth, whereas the second as a measurement
+    described by the distance norm `mynorm`.
+"""
+function find_ft_shift_iter(fdat1, fdat2; max_range=nothing, verbose=true, mynorm=dist_sqr)
+    # loss(v) = mynorm(fdat1, v[1].*exp_shift_dat(fdat2,v[2:end])) 
+    loss(v) = mynorm(fdat1, exp_shift_dat(fdat2,v)) 
+    function g!(G, x)  # (G, x)
+        G .= gradient(loss, x)[1]
+    end
+    # p_est = [1.0, zeros(ndims(fdat2))...]
+    p_est = zeros(ndims(fdat2))
+    od = OnceDifferentiable(loss, g!, p_est)
+    res = let
+        if !isnothing(max_range)
+            lower = k_est .- max_range
+            upper = k_est .+ max_range
+            @time optimize(od, lower, upper, p_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
+        else
+            @time optimize(od, p_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
+        end
+    end
+    # res.minimizer[2:end], res.minimizer[1]
+    res.minimizer
+end
+
+"""
+    find_ft_shift_iter(dat1, dat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
+    finds the shift between two input images by minimizing the distance.
+    To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
+    Therefore `dat1` and `dat2` have to the the FFTs of the data. 
+    Returned is an estimate of the real space (subpixel) shift.
+
+    The first image is interpreted as the ground truth, whereas the second as a measurement
+    described by the distance norm `mynorm`.
+"""
+function find_shift_iter(dat1, dat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
+    # mycor = irft(rft(dat1) .* conj(rft(dat2)), size(dat1)[1])
+    mycor = fftshift(irfft(rfft(dat1) .* conj(rfft(dat2)), size(dat1)[1]))
+    Δx = let
+        if isnothing(Δx)
+            find_max(mycor, exclude_zero=false)
+        else
+            Δx
+        end
+    end
+    dat1, dat2 = shift_cut(dat1, dat2, .-Δx)
+    win = window_hanning(size(dat1), border_in=0.0)
+
+    sub = find_ft_shift_iter(ft(win .* dat1), ft(win .* dat2))
+    Δx .+ sub # , 1 ./scale
+end
+
+
+"""
+    shift_cut(dat1, dat2, Δx)
+    assumes that input image `dat2` is a version of `dat1` but shifted by `Δx`.
+    returned are both images shifted to the same coordinate system and cut such that no wrap-around occurs.
+"""
+function shift_cut(dat1, dat2, Δx)
+    sz1 = size(dat1)
+    sz2 = size(dat2)
+    szn =  sz1 .- abs.(Δx)
+    ctrn = (szn .÷2) .+ 1
+    c1 = ifelse.(Δx .> 0, ctrn, (2 .* sz1 .- szn) .÷2 .+1)
+    c2 = ifelse.(Δx .> 0, (2 .* sz2 .- szn) .÷2 .+1, ctrn)
+    return select_region(dat1, center = c1, new_size=szn), select_region(dat2, center = c2, new_size=szn)
+end
 
 function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false)
     win = collect(window_hanning(size(dat), border_in=0.0))
@@ -179,9 +241,10 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, 
         if !isnothing(max_range)
             lower = k_est .- max_range
             upper = k_est .+ max_range
-            @time optimize(od,lower, upper, k_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
+            @time optimize(od, lower, upper, k_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
         else
             @time optimize(od, k_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
+            # @time optimize(od, k_est, GradientDescent(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
             # @time optimize(mynorm2, g!, k_est, LBFGS(), Optim.Options(show_trace=true)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
         end
     end

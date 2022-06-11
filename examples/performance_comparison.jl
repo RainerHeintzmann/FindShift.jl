@@ -2,7 +2,7 @@ using FindShift
 using FourierTools
 using View5D, TestImages, Noise, FiniteDifferences, IndexFunArrays, Zygote
 using LinearAlgebra, Statistics
-using Random
+using Random, NDTools
 using View5D # for get_positions
 
 export peak_compare
@@ -45,6 +45,8 @@ end
 function test_iter()
     myk = [10.2, 22.3]
     sz = (512,512)
+    myk = [2.1, 1.2]
+    sz = (150,150)
     mysin = exp.(2pi.*1im.*(xx(sz) .* myk[1]./sz[1] .+ yy(sz) .* myk[2]./sz[2]));
     # peak_compare(myk, method=:FindIter)
     win = collect(window_hanning(size(mysin), border_in=0.0)) # helps a bit. 
@@ -96,7 +98,6 @@ function test_iter()
 end
 
 function compare_performance_cos()
-
         myerr = []
         myerr_iter = []
         NPhot = 500000
@@ -116,4 +117,13 @@ function compare_performance_cos()
 
         mypeak = ft2d(mysin .* window_hanning(size(mysin), border_in=(0,0)))
         res = get_subpixel_peak(mypeak,(0,-100), scale=(10,10))    
+end
+
+
+function test_find_shift()
+    obj = Float32.(testimage("resolution_test_512.tif"));
+    dat1 = select_region(obj, new_size=(70,70))
+    dat2 = select_region(shift(obj, (5.5, -7.7)), new_size=(70,70))
+    @vt dat1 dat2
+    find_shift_iter(dat1, 1.3 .* dat2)
 end
