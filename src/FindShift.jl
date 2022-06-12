@@ -33,7 +33,7 @@ end
         mymid = (sz.÷2).+1
         times_pos(p,d) = (p .-mymid) .* d
         function exp_shift_dat_pullback(barx)
-            pvec = 2pi * k_0 ./ sz;
+            pvec = 2pi * k_0 ./ sz; # is a cast to Vector helpful?
             res = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), 
                     barx .* conj.(dat .* separable_view((p, pvec) -> exp(-1im * pvec * p), sz, pvec))))
             res = 1im .* res .* 2pi ./ sz

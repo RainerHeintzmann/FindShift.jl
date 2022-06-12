@@ -120,9 +120,10 @@ function compare_performance_cos()
 end
 
 function grad_checks()
-    dat = rand(5,5)
-    f(x) = sum(abs2.(dat .- FindShift.exp_shift_dat(dat,x)))
-    f(x) = sum(abs2.(FindShift.exp_shift_dat(dat,x)))
+    dat1 = rand(ComplexF64, 5,5)
+    dat2 = rand(ComplexF64,5,5)
+    f(x) = sum(abs2.(dat1 .- FindShift.exp_shift_dat(dat2,x)))
+    # f(x) = sum(abs2.(FindShift.exp_shift_dat(dat,x))) # yields zero
     gradient(f,[0.1,0.2])[1]
     grad(central_fdm(5, 1),f,[0.1,0.2])[1]
 end
@@ -134,6 +135,6 @@ function test_find_shift()
     dat1 = select_region(obj, new_size=sz)
     dat2 = select_region(shift(obj, (5.5, -7.7)), new_size=sz)
 
-    @vt dat1 dat2
-    find_shift_iter(dat1, dat2)
+    sv = find_shift_iter(dat1, dat2)
+    @vt dat1 dat2 shift(dat2, sv)
 end
