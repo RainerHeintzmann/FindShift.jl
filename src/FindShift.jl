@@ -1,9 +1,10 @@
 module FindShift
 export abs2_ft_peak, sum_exp_shift, find_ft_peak, correlate, beautify, get_subpixel_peak, align_stack, optim_correl
-export find_shift_iter, shift_cut
+export find_shift_iter, shift_cut, seperable_view, arg_n
 
 using FourierTools, IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore, Statistics
 using FFTW
+using LazyArrays
 
 # add FourierTools,IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore
 # add View5D, TestImages, Noise, FiniteDifferences
@@ -129,6 +130,65 @@ function dist_anscombe(dat1, dat2)
     sum(abs2.(sqrt.(dat1) .- sqrt.(dat2)))
 end
 
+""" 
+    arg_n(n,args...)
+    returns a Tuple of the n^th vector in args
+
+# Example
+```julia
+```
+"""
+function arg_n(n,args)
+    return (a[n] for a in args)
+end
+
+"""
+    seperable_view{N}(fct, sz, args...)
+    creates an array view of an N-dimensional seperable function.
+    Note that this view consumes much less memory than a full allocation of the collected result.
+    Note also that an N-dimensional calculation expression may be much slower than this view reprentation of a product of N one-dimensional arrays.
+    See the example below.
+    
+# Arguments:
++ fct: The seperable function, with a number of arguments corresponding to `length(args)`, each corresponding to a vector of seperable inputs of length N.
+        The first argument of this function is a Tuple corresponding the centered indices.
++ sz: The size of the N-dimensional array to create
++ args...: a list of arguments, each being an N-dimensional vector
+
+# Example:
+```julia
+julia> pos = (0.1, 0.2); sigma = (0.5, 1.0);
+
+julia> gaussian = seperable_view( (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2)), (6,5), (0.1,0.2),(0.5,1.0))
+(6-element Vector{Float64}) .* (1×5 Matrix{Float64}):
+ 3.99823e-10  2.18861e-9   4.40732e-9   3.26502e-9   8.89822e-10
+ 1.3138e-5    7.19168e-5   0.000144823  0.000107287  2.92392e-5
+ 0.00790705   0.0432828    0.0871609    0.0645703    0.0175975
+ 0.0871609    0.477114     0.960789     0.71177      0.19398
+ 0.0175975    0.0963276    0.19398      0.143704     0.0391639
+ 6.50731e-5   0.000356206  0.000717312  0.000531398  0.000144823
+```
+"""
+function seperable_view(fct, sz, args...)
+    first_args = arg_n(1, args)
+    start = -sz[1].÷2 
+    idc = start:start+sz[1]-1
+    res = collect(fct.(idc,first_args...))
+    for d = 2:length(sz)
+        start = -sz[d].÷2 
+        idc = start:start+sz[d]-1
+        myaxis = collect(reorient(fct.(idc,arg_n(d, args)...), d))
+        # LazyArray representation of expression
+        res = LazyArray(@~ res .* myaxis)
+    end
+    res
+end
+
+function exp_shift_sep(sz, k_0)
+    pvec = k_0 ./ sz;
+    seperable_view((p, pvec) -> exp((1im*2pi) * pvec * p), sz, pvec)
+end
+
 """
     find_ft_shift_iter(fdat1, fdat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
     finds the shift between two input images by minimizing the distance.
@@ -141,7 +201,8 @@ end
 """
 function find_ft_shift_iter(fdat1, fdat2; max_range=nothing, verbose=true, mynorm=dist_sqr)
     # loss(v) = mynorm(fdat1, v[1].*exp_shift_dat(fdat2,v[2:end])) 
-    loss(v) = mynorm(fdat1, exp_shift_dat(fdat2,v)) 
+    win = 1.0 # window_hanning(size(fdat2), border_in=0.0, border_out=1.0)  # window in frequency space
+    loss(v) = mynorm(fdat1, win .* exp_shift_dat(fdat2,v)) 
     function g!(G, x)  # (G, x)
         G .= gradient(loss, x)[1]
     end
