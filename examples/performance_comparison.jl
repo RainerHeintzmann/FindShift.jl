@@ -119,11 +119,21 @@ function compare_performance_cos()
         res = get_subpixel_peak(mypeak,(0,-100), scale=(10,10))    
 end
 
+function grad_checks()
+    dat = rand(5,5)
+    f(x) = sum(abs2.(dat .- FindShift.exp_shift_dat(dat,x)))
+    f(x) = sum(abs2.(FindShift.exp_shift_dat(dat,x)))
+    gradient(f,[0.1,0.2])[1]
+    grad(central_fdm(5, 1),f,[0.1,0.2])[1]
+end
+
 
 function test_find_shift()
     obj = Float32.(testimage("resolution_test_512.tif"));
-    dat1 = select_region(obj, new_size=(70,70))
-    dat2 = select_region(shift(obj, (5.5, -7.7)), new_size=(70,70))
+    sz = (170,170)
+    dat1 = select_region(obj, new_size=sz)
+    dat2 = select_region(shift(obj, (5.5, -7.7)), new_size=sz)
+
     @vt dat1 dat2
-    find_shift_iter(dat1, 1.3 .* dat2)
+    find_shift_iter(dat1, dat2)
 end

@@ -1,6 +1,6 @@
 module FindShift
 export abs2_ft_peak, sum_exp_shift, find_ft_peak, correlate, beautify, get_subpixel_peak, align_stack, optim_correl
-export find_shift_iter, shift_cut, seperable_view, arg_n
+export find_shift_iter, shift_cut, separable_view, arg_n
 
 using FourierTools, IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore, Statistics
 using FFTW
@@ -11,23 +11,48 @@ using LazyArrays
 
 # since Zygote cannot deal with exp_ikx from the IndexFunArray Toolbox, here is an alternative
 function exp_shift(sz, k_0)
-    mymid = (sz.÷2).+1
+    # mymid = (sz.÷2).+1
     pvec = k_0 ./ sz;
-    [exp((1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(sz)]
+    separable_view((p, pvec) -> exp((1im*2pi) * pvec * p), sz, pvec)
+    # [exp((1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(sz)]
 end
 
 function exp_shift_dat(dat, k_0)
     sz = size(dat)
-    mymid = (sz.÷2).+1
+    # mymid = (sz.÷2).+1
     pvec = k_0 ./ sz;
-    [dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat)]
+    # [dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat)]
+    dat .* separable_view((p, pvec) -> exp((-1im*2pi) * pvec * p), sz, pvec)
 end
+
+ # define custom adjoint for sum_exp_shift
+ function ChainRulesCore.rrule(::typeof(exp_shift_dat), dat, k_0)
+    Z = exp_shift_dat(dat, k_0)
+
+    exp_shift_dat_pullback = let sz = size(dat)
+        mymid = (sz.÷2).+1
+        times_pos(p,d) = (p .-mymid) .* d
+        function exp_shift_dat_pullback(barx)
+            pvec = 2pi * k_0 ./ sz;
+            res = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), 
+                    barx .* conj.(dat .* separable_view((p, pvec) -> exp(-1im * pvec * p), sz, pvec))))
+            res = 1im .* res .* 2pi ./ sz
+            #@show res
+            #@show barx
+            return NoTangent(), NoTangent(), res # res # apply_tuple_list.(.*, res, barx) # (ChainRulesCore.@not_implemented "Save computation"), 
+        end
+    end
+   # @show abs2(Y)
+    return Z, exp_shift_dat_pullback
+end
+
 
 function sum_exp_shift(dat, k_0)
     sz = size(dat)
-    mymid = (sz.÷2).+1
+    # mymid = (sz.÷2).+1
     pvec = k_0 ./ sz;
-    sum(dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
+    # sum(dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
+    sum(dat .* separable_view((p, pvec) -> exp((-1im*2pi) * pvec * p), sz, pvec))
 end
 
 function sum_exp_shift_ix(dat, k_0)
@@ -37,7 +62,11 @@ function sum_exp_shift_ix(dat, k_0)
     accumulate(.+, dat[p] .* Tuple(p) .* exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
 end
 
-function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
+"""
+    sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
+    a helper function for the gradient of a sum over an exponential
+"""
+function sum_res_i_old(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
     mymid = (size(dat).÷2).+1
     s1 = sum(conj(dat[p]) * exp(1im * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
     s1_i = imag.(s1)
@@ -48,7 +77,7 @@ function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
     s2_r = zeros(Float64, D) 
     s2_i = zeros(Float64, D) 
 
-    sp = zero(eltype(pvec)) 
+    sp = zero(eltype(pvec))
     for p in  CartesianIndices(dat)
         x .= Tuple(p) .- mymid
         sp = dot(pvec, x)
@@ -58,6 +87,35 @@ function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
         res_i .+= s1_i.*s2_r .+ s1_r .* s2_i
     end
     res_i
+end
+
+function t_imag(t1)
+    imag.(t1)
+end
+
+function t_sum(t1, t2)
+    t1 .+ t2
+end
+
+function sum_t(ts)
+    reduce(t_sum, ts)
+end
+
+"""
+    sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
+    a helper function for the gradient of a sum over an exponential
+"""
+function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
+    sz = size(dat)
+    mymid = (sz.÷2).+1
+    s1 = sum(conj.(dat) .* separable_view((p, pvec) -> exp((1im) * pvec * p), sz, pvec))
+    # s2 = sum_t(apply_tuple_list.(.*, idx(sz), dat .* separable_view((p, pvec) -> exp((-1im) * pvec * p), sz, pvec)))
+    times_pos(p,d) = (p .-mymid) .* d
+    s2 = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), dat .* separable_view((p, pvec) -> exp((-1im) * pvec * p), sz, pvec)))
+    t_imag.(s1 .* s2)
+
+    #res =  sum_t(t_imag.(apply_tuple_list.(.*,idx(sz), s1 .* dat .* separable_view((p, pvec) -> exp((-1im * pvec * p)), sz, pvec))))
+    # (Tuple.(CartesianIndices(sz)) .- mymid)
 end
 
 """
@@ -75,7 +133,6 @@ end
 
     abs2_ft_peak_pullback = let sz = size(dat)
         function abs2_ft_peak_pullback(barx)
-            sz = size(dat)
             pvec = 2pi .*Vector(k_cur) ./ sz;
             res_i = sum_res_i(dat, pvec)
             # res = 2 .*imag.(s1 .* s2) .* 2pi ./ sz
@@ -143,14 +200,14 @@ function arg_n(n,args)
 end
 
 """
-    seperable_view{N}(fct, sz, args...)
-    creates an array view of an N-dimensional seperable function.
+    separable_view{N}(fct, sz, args...)
+    creates an array view of an N-dimensional separable function.
     Note that this view consumes much less memory than a full allocation of the collected result.
     Note also that an N-dimensional calculation expression may be much slower than this view reprentation of a product of N one-dimensional arrays.
     See the example below.
     
 # Arguments:
-+ fct: The seperable function, with a number of arguments corresponding to `length(args)`, each corresponding to a vector of seperable inputs of length N.
++ fct: The separable function, with a number of arguments corresponding to `length(args)`, each corresponding to a vector of separable inputs of length N.
         The first argument of this function is a Tuple corresponding the centered indices.
 + sz: The size of the N-dimensional array to create
 + args...: a list of arguments, each being an N-dimensional vector
@@ -159,7 +216,7 @@ end
 ```julia
 julia> pos = (0.1, 0.2); sigma = (0.5, 1.0);
 
-julia> gaussian = seperable_view( (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2)), (6,5), (0.1,0.2),(0.5,1.0))
+julia> my_gaussian = separable_view( (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2)), (6,5), (0.1,0.2),(0.5,1.0))
 (6-element Vector{Float64}) .* (1×5 Matrix{Float64}):
  3.99823e-10  2.18861e-9   4.40732e-9   3.26502e-9   8.89822e-10
  1.3138e-5    7.19168e-5   0.000144823  0.000107287  2.92392e-5
@@ -169,7 +226,7 @@ julia> gaussian = seperable_view( (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2)),
  6.50731e-5   0.000356206  0.000717312  0.000531398  0.000144823
 ```
 """
-function seperable_view(fct, sz, args...)
+function separable_view(fct, sz, args...)
     first_args = arg_n(1, args)
     start = -sz[1].÷2 
     idc = start:start+sz[1]-1
@@ -186,7 +243,7 @@ end
 
 function exp_shift_sep(sz, k_0)
     pvec = k_0 ./ sz;
-    seperable_view((p, pvec) -> exp((1im*2pi) * pvec * p), sz, pvec)
+    separable_view((p, pvec) -> exp((1im*2pi) * pvec * p), sz, pvec)
 end
 
 """
