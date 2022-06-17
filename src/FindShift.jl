@@ -256,7 +256,7 @@ end
     The first image is interpreted as the ground truth, whereas the second as a measurement
     described by the distance norm `mynorm`.
 """
-function find_ft_shift_iter(fdat1, fdat2; max_range=nothing, verbose=true, mynorm=dist_sqr)
+function find_ft_shift_iter(fdat1, fdat2; max_range=nothing, verbose=false, mynorm=dist_sqr)
     # loss(v) = mynorm(fdat1, v[1].*exp_shift_dat(fdat2,v[2:end])) 
     win = 1.0 # window_hanning(size(fdat2), border_in=0.0, border_out=1.0)  # window in frequency space
     loss(v) = mynorm(fdat1, win .* exp_shift_dat(fdat2,v)) 
@@ -389,7 +389,7 @@ localizes the peak in Fourier-space with sub-pixel accuracy using an iterative f
 + exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
 + scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
 """
-function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10, verbose=true)
+function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10, verbose=false)
     fdat = ft(dat)
     k_est = let
         if isnothing(k_est)
@@ -415,9 +415,10 @@ function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT, interactive=false,
 end
 
 """
-    align_stack(dat; refno=1, ref = nothing, damp=0.1, max_freq=0.4, dim=3, method=:FindZoomFT)
+    align_stack(dat; refno=1, ref = nothing, damp=0.1, max_freq=0.4,  dim=ndims(dat), method=:FindZoomFT)
     aligns a series of images with respect to a reference image `ref`. 
     If `ref==nothing` this image is extracted from the stack at position `refno`. If `refno==nothing` the central position is used.
+    If `eltype(dat)` is an Integer Type, the data will be casted to `Float32`.
 
 # Arguments
 + dat: stack to align slicewise
@@ -425,8 +426,21 @@ end
 + reno: number of reference imag in stack (only if `isnothing(ref)==true`)
 + damp: percentage of outer region to damp
 + max_freq: maximal frequency to consider in the correlation
+
+# Example
+```julia
+julia> dat = rand(100,100);
+
+julia> N=10; sh = [rand(2) for d=1:N]; sh[N÷2+1] = [0.0,0.0]
+
+julia> dats = cat((shift(dat, .- sh[d]) for d=1:N)..., dims=3);
+
+julia> dat_aligned, shifts = align_stack(dats);
+
+juliat> shifts .- sh 
+```
 """
-function align_stack(dat; refno=nothing, ref = nothing, damp=0.1, max_freq=0.4, dim=3, method=:FindZoomFT)
+function align_stack(dat; refno=nothing, ref = nothing, damp=0.1, max_freq=0.4, dim=ndims(dat), method=:FindIter, shifts=nothing)
     refno = let
         if isnothing(refno)
             refno=size(dat)[dim] ÷2 +1
@@ -434,9 +448,12 @@ function align_stack(dat; refno=nothing, ref = nothing, damp=0.1, max_freq=0.4, 
             refno
         end
     end
+    if eltype(dat) <: Integer
+        dat = Float32.(dat)
+    end
 	ref = let
 		if isnothing(ref)
-			ref = dat[:,:,refno]
+			ref = slice(dat, dim, refno)
 		else
 			ref
 		end
@@ -447,20 +464,27 @@ function align_stack(dat; refno=nothing, ref = nothing, damp=0.1, max_freq=0.4, 
   		border_in=max_freq*0.8,border_out=max_freq*1.2)
 		# rr(size(ref)) .< maxfreq .* size(ref)[1]
 	imgs = []
-	shifts = []
+	res_shifts = []
 	fref = fwin .* conj(ft(wh .* (ref .- mean(ref))))
 	for n=1:size(dat,dim)
-        aslice = dropdims(slice(dat, dim, n), dims=dim)
-		cor_ft = ft(wh .* (aslice .- mean(aslice))) .* fref
-        myshift = find_ft_peak(cor_ft, method=method, interactive=false)
+        aslice = slice(dat, dim, n)
+        # aslice = dropdims(aslice, dims=dim)
+        myshift = let 
+            if isnothing(shifts)
+                cor_ft = ft(wh .* (aslice .- mean(aslice))) .* fref
+                find_ft_peak(cor_ft, method=method, interactive=false)
+            else
+                shifts[n]
+            end
+        end
 		# m, p = findmax(abs.(cor))
 		# midp = size(cor).÷ 2 .+1
 		# myshift = midp .- Tuple(p)
-		push!(shifts, myshift)
+		push!(res_shifts, myshift)
 		push!(imgs, shift(aslice, myshift))
 		# push!(imgs, cor_ft)
 	end
-	cat(imgs...,dims=dim) , shifts
+	cat(imgs...,dims=dim), res_shifts
 end
 
 
