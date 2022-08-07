@@ -60,7 +60,8 @@ end
 """
 function compute_homography(markers_from, markers_to)
     # matrix containing the coefficient to look for:
-    A = zeros(2 * length(markers_from), 9)
+    # 10th eq. for the contraint that the last entry needs to be always one.
+    A = zeros(2 * length(markers_from) + 3, 9)
     index = 1
     for (match1, match2) in zip(markers_from, markers_to)
         base_index_x = index * 2 - 1
@@ -73,10 +74,18 @@ function compute_homography(markers_from, markers_to)
             -1.0 * A[base_index_x, base_index_y] * match2[2]
         index += 1 
     end
-  
-    ns = nullspace(A, rtol=1e-10)
+    A[9, 9] = 1e8*one(eltype(A))  # enforce the result vector to be normalized
+    A[10, 8] = 1e8*one(eltype(A))  # enforce the result vector to be normalized
+    A[11, 7] = 1e8*one(eltype(A))  # enforce the result vector to be normalized
+    b = eltype(A).([0,0,0,0,0,0,0,0,1e8,0,0])
+    # b = eltype(A).([1,1,1,1,1,1,1,1,1])
+    ns = A\b
     return SMatrix{3,3}(reshape(ns, (3, 3))') # the normalization needs to be taken care of 
-    # return SMatrix{3,3}(reshape(ns ./ ns[end], (3, 3))')
+  
+    # ns = nullspace(A)
+    # return SMatrix{3,3}(reshape(ns, (3, 3))') # the normalization needs to be taken care of 
+    # return SMatrix{3,3}(reshape(ns ./ ns[end], (3, 3))')  # bad results
+
 end
 
 function get_warp(H::SArray{Tuple{S, S}, T, N})  where {S,T,N}
