@@ -1,5 +1,5 @@
-function idx_to_coord(idx, sz)
-    (idx==1) ? sz÷4 .+1 : (3*sz÷4) .+1
+function idx_to_coord(idx, sz, edge_frac=1/7)
+    round(Int, (idx==1) ?  sz.*edge_frac .+1 : sz.*(1 .- edge_frac) .+1)
 end
 """
     get_default_markers(image)
@@ -21,7 +21,7 @@ end
 + patch_size:   tuple denoting the size of each patch
 
 """
-function extract_patches(img, markers=nothing, patch_size=max.(size(img) .÷5,5))
+function extract_patches(img, markers=nothing, patch_size=max.(size(img) .÷ 5,5))
     patches = []
     if isnothing(markers)
         markers = get_default_markers(img)
@@ -58,10 +58,10 @@ end
     computes the homography matrix H which means
     H [markers1[n]...,1] = [markers2[n]...,1] etc
 """
-function compute_homography(markers_from, markers_to)
+function compute_homography(markers_from, markers_to; extra_constraint=false)
     # matrix containing the coefficient to look for:
     # 10th eq. for the contraint that the last entry needs to be always one.
-    A = zeros(2 * length(markers_from) + 3, 9)
+    A = zeros(2 * length(markers_from) + 2*extra_constraint, 9) #  + 3
     index = 1
     for (match1, match2) in zip(markers_from, markers_to)
         base_index_x = index * 2 - 1
@@ -74,31 +74,46 @@ function compute_homography(markers_from, markers_to)
             -1.0 * A[base_index_x, base_index_y] * match2[2]
         index += 1 
     end
-    A[9, 9] = 1e8*one(eltype(A))  # enforce the result vector to be normalized
-    A[10, 8] = 1e8*one(eltype(A))  # enforce the result vector to be normalized
-    A[11, 7] = 1e8*one(eltype(A))  # enforce the result vector to be normalized
-    b = eltype(A).([0,0,0,0,0,0,0,0,1e8,0,0])
-    # b = eltype(A).([1,1,1,1,1,1,1,1,1])
-    ns = A\b
-    return SMatrix{3,3}(reshape(ns, (3, 3))') # the normalization needs to be taken care of 
-  
-    # ns = nullspace(A)
+    enhancement = 1e8
+    # A[9, 9] = enhancement*one(eltype(A))  # enforce the result vector to be normalized
+    if extra_constraint
+        A[9, 8] = enhancement*one(eltype(A))  # enforce the result vector to be normalized
+        A[10, 7] = enhancement*one(eltype(A))  # enforce the result vector to be normalized
+    end
+    # b = eltype(A).([0,0,0,0,0,0,0,0,enhancement,0,0])
+    # # b = eltype(A).([1,1,1,1,1,1,1,1,1])
+    # ns = A\b
     # return SMatrix{3,3}(reshape(ns, (3, 3))') # the normalization needs to be taken care of 
+  
+    if extra_constraint
+        ns = nullspace(A, rtol=1e-9)
+    else
+        ns = nullspace(A)
+    end
+    return SMatrix{3,3}(reshape(ns, (3, 3))') / ns[end] # the normalization needs to be taken care of 
     # return SMatrix{3,3}(reshape(ns ./ ns[end], (3, 3))')  # bad results
 
 end
 
 function get_warp(H::SArray{Tuple{S, S}, T, N})  where {S,T,N}
-    tmp = ones(T,S)
-    tmp2 = zeros(T,S)
-    function ϕ(x::SArray{Tuple{S2}, Int64, 1, S2}) where {S2}
-        tmp[1:S-1] .= T.(x)
+    tmp = ones(Float64,S)
+    tmp2 = zeros(Float64,S)
+    function ϕ(x) # where {S2, T2}
+        tmp[1:S-1] .= Float64.(x)
         # return @view (H*tmp)[1:S-1] # ./((H*[x..., one(T)])[S])
         tmp2 .= H*tmp
-        return (@view tmp2[1:S-1]) ./ tmp2[S]
+        tmp2 ./= tmp2[S]
+        return @view tmp2[1:S-1] # the @view is essential to not allocate memory
     end
     return ϕ
 end
+
+# function get_affine_warp(H::SArray{Tuple{S, S}, T, N})  where {S,T,N}
+#     function ϕ(x::SArray{Tuple{S}, Int64, 1, S}) 
+#         return H*x # the @view is essential to not allocate memory
+#     end
+#     return ϕ
+# end
 
 """
     get_homography_warp(markers_from, markers_to)
@@ -106,9 +121,24 @@ end
     The result is a function the can be applied to an `SVector` and thus
     be directly used in `warp(image, ϕ, axes(image))` to warp the `image`.
 """
-function get_homography_warp(markers_from, markers_to, rot_mat=1I)
-    H = compute_homography(markers_from, markers_to) * rot_mat
-    return get_warp(H)
+function get_homography_warp(markers_from, markers_to, rot_mat=nothing)
+    if !isnothing(rot_mat)
+        # irot = inv(rot_mat)
+        markers_to_2 = [(rot_mat*[m...,1.0])[1:2] for m in markers_to]
+        H = compute_homography(markers_from, markers_to_2) 
+        w2 = get_warp(H)
+        return w2
+        # w1 = get_warp(SMatrix{3,3}(rot_mat))
+        # return x -> w2(w1(x))
+    else
+        H = compute_homography(markers_from, markers_to) 
+        w2 = get_warp(H)
+        return w2
+    end
+end
+
+function get_shift(myshift)
+    SMatrix{3,3}([1.0 0.0 myshift[1];0.0 1.0 myshift[2];0.0 0.0 1.0])
 end
 
 """
@@ -117,10 +147,10 @@ end
 """
 function get_rotation(moving, Φ)
     midpos = (size(moving) .÷2) .+1
-    shift_mat = SMatrix{3,3}([1.0 0.0 -midpos[1];0.0 1.0 -midpos[2];0.0 0.0 1.0])
+    shift_mat = get_shift(.-midpos)
     rot_mat = SMatrix{3,3}([cos(Φ) -sin(Φ) 0; sin(Φ) cos(Φ) 0; 0.0 0.0 1.0])
-    shift_mat2 = SMatrix{3,3}([1.0 0.0 midpos[1];0.0 1.0 midpos[2];0.0 0.0 1.0])
-    rot_mat = shift_mat2 * rot_mat * shift_mat #  
+    shift_mat2 = get_shift(midpos) 
+    return shift_mat2 * rot_mat * shift_mat #  
 end
 
 """
@@ -150,13 +180,14 @@ function determine_homography_warps(fixed, movings, markers=nothing; patches=not
         end
     end
     for moving in movings
-        rot_mat = 1I
+        rot_mat = nothing
         if !isnothing(pre_rotate_angles) && !isnothing(pre_rotate_angles[num])
-            Φ = pre_rotate_angles[num]
-            moving = rotate(moving, Φ) # keeps the (Fourier-type) center pixel constant
-            rot_mat = get_rotation(moving, Φ*pi/180)
+            Φ = pre_rotate_angles[num]*pi/180 # converted to rad
+            moving = FourierTools.rotate(moving, Φ) # keeps the (Fourier-type) center pixel constant
+            rot_mat = get_rotation(moving, Φ)
         end
         located_pos, shifted = locate_patches(q, moving)
+        @show located_pos
         if !isnothing(patches)
             push!(patches, shifted)
         end
@@ -166,7 +197,7 @@ function determine_homography_warps(fixed, movings, markers=nothing; patches=not
             if  dist .> max_shift
                 @warn("A located position $(pos) in image $(num) is at distance $(dist), too far way from the reference position.")
                 # @vt moving shifted
-                error("inacceptably large displacement bailing out.")
+                # error("inacceptably large displacement bailing out.")
             end
             pos += 1
         end

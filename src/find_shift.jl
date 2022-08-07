@@ -271,6 +271,8 @@ function find_ft_shift_iter(fdat1, fdat2; max_range=nothing, verbose=false, myno
     res.minimizer
 end
 
+# using View5D
+
 """
     find_ft_shift_iter(dat1, dat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
     finds the shift between two input images by minimizing the distance.
@@ -292,7 +294,9 @@ function find_shift_iter(dat1, dat2, Δx=nothing; max_range=nothing, verbose=fal
             rft1 = rfft(dat1)
             cor1 = fftshift(irfft(rft1 .* conj(rfft(dat2_big)), size(dat1)[1]))
             cor2 = fftshift(irfft(rft1 .* conj(rfft(ref)), size(dat1)[1]))
-            cor1 ./ (abs.(cor2) .+ maximum(cor1) ./ 100)
+            # res = cor1 ./ (abs.(cor2) .+ maximum(cor1) ./ 100)
+            # @vt cor1 res
+            cor1
         end
     end
     Δx = let
