@@ -283,29 +283,43 @@ end
     The first image is interpreted as the ground truth, whereas the second as a measurement
     described by the distance norm `mynorm`.
 """
-function find_shift_iter(dat1, dat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
+function find_shift_iter(dat1, dat2, Δx=nothing) # max_range=nothing, verbose=false, mynorm=dist_sqr
     # mycor = irft(rft(dat1) .* conj(rft(dat2)), size(dat1)[1])
     mycor = let
         if all((size(dat2).-size(dat1)) .== 0)
-            fftshift(irfft(rfft(dat1) .* conj(rfft(dat2)), size(dat1)[1]))
+            if eltype(dat1)<:Real && eltype(dat2)<:Real
+                fftshift(irfft(rfft(dat1) .* conj(rfft(dat2)), size(dat1)[1]))
+            else
+                fftshift(ifft(fft(dat1) .* conj(fft(dat2))))
+            end
         else # normalize the correlation appropriately to identify the snippet
             dat2_big = select_region(dat2, new_size=size(dat1))
-            ref = select_region(ones(eltype(dat1), size(dat2)), new_size=size(dat1))
-            rft1 = rfft(dat1)
-            cor1 = fftshift(irfft(rft1 .* conj(rfft(dat2_big)), size(dat1)[1]))
-            cor2 = fftshift(irfft(rft1 .* conj(rfft(ref)), size(dat1)[1]))
-            # res = cor1 ./ (abs.(cor2) .+ maximum(cor1) ./ 100)
-            # @vt cor1 res
+            # ref = select_region(ones(eltype(dat1), size(dat2)), new_size=size(dat1))
+            if eltype(dat1)<:Real && eltype(dat2)<:Real
+                rft1 = rfft(dat1)
+                cor1 = fftshift(irfft(rft1 .* conj(rfft(dat2_big)), size(dat1)[1]))
+                # cor2 = fftshift(irfft(rft1 .* conj(rfft(ref)), size(dat1)[1]))
+                # res = cor1 ./ (abs.(cor2) .+ maximum(cor1) ./ 100)
+                # @vt cor1 res
+            else
+                rft1 = fft(dat1)
+                cor1 = fftshift(ifft(rft1 .* conj(fft(dat2_big))))
+            end
             cor1
         end
     end
     Δx = let
         if isnothing(Δx)
-            find_max(mycor, exclude_zero=false)
+            if eltype(dat1)<:Real && eltype(dat2)<:Real
+                find_max(mycor, exclude_zero=false)
+            else
+                find_max(abs2.(mycor), exclude_zero=false)
+            end
         else
             Δx
         end
     end
+
     dat1, dat2 = shift_cut(dat1, dat2, .-Δx)
     # return dat1, dat2, mycor, Δx
     win = window_hanning(size(dat1), border_in=0.0)

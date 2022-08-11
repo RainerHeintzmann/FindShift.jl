@@ -1,57 +1,3 @@
-function idx_to_coord(idx, sz, edge_frac=1/7)
-    round(Int, (idx==1) ?  sz.*edge_frac .+1 : sz.*(1 .- edge_frac) .+1)
-end
-"""
-    get_default_markers(image)
-    returns the default marker positions of a given `image` dataset.
-    The default is at 25% and 75% along each dimension.
-"""
-function get_default_markers(image)
-    NIdx = Tuple(2 .*ones(Int, ndims(image)))
-    [idx_to_coord.(Tuple(idx), size(image)) for idx in CartesianIndices(NIdx)[:]]
-end
-
-"""
-    extract_patches(img, markers=nothing, patch_size=max.(size(img) .÷5,5))
-    extracts pathes, usually near at the corners as defined by the patch center positions
-    `markers`. The patch size can be specified by `patch_size`.
-#Arguments
-+ img:          image from which the patches are extracted using `select_region` from the NDTools package.
-+ markers:      a vector of center positions where the alignment should be determined. If `nothing` is provided, positions at 25% and 75% of each coordinates are chosen.
-+ patch_size:   tuple denoting the size of each patch
-
-"""
-function extract_patches(img, markers=nothing, patch_size=max.(size(img) .÷ 5,5))
-    patches = []
-    if isnothing(markers)
-        markers = get_default_markers(img)
-    end
-    for m in markers
-        patch = select_region(img, new_size=patch_size, center=Tuple(m))
-        push!(patches, patch)
-    end
-    return patches, markers # cat(patches..., dims=ndims(img)+1)
-end
-
-
-"""
-    locate_patches(patches, large_image)
-    locates each patch in a vector of image `patches` in a `large_image`.
-    returned is vector of the sup-pixel center positions of the located patches and 
-    a large image with the patches shifted to the found positions. 
-    Note that this algorithm works with sub-pixel precision.
-"""
-function locate_patches(patches, large_image)
-    mymid = size(large_image).÷2 .+1
-    located_pos = []
-    shifted = zeros(size(large_image))
-    for snippet in patches
-        myshift = find_shift_iter(select_region(large_image, new_size=size(large_image).+size(snippet)), snippet)
-        push!(located_pos, myshift .+ mymid)
-        shifted .+= shift(select_region(snippet, new_size=size(large_image)), myshift)
-    end
-    return located_pos, shifted 
-end
 
 """
     compute_homography(markers1, markers2)
@@ -137,21 +83,6 @@ function get_homography_warp(markers_from, markers_to, rot_mat=nothing)
     end
 end
 
-function get_shift(myshift)
-    SMatrix{3,3}([1.0 0.0 myshift[1];0.0 1.0 myshift[2];0.0 0.0 1.0])
-end
-
-"""
-    get_rotation(moving, Φ)
-    returns a rotation operation in homography coordinates by the angle `Φ` in rad, which accounts for the middle pixel kept unchanged.
-"""
-function get_rotation(moving, Φ)
-    midpos = (size(moving) .÷2) .+1
-    shift_mat = get_shift(.-midpos)
-    rot_mat = SMatrix{3,3}([cos(Φ) -sin(Φ) 0; sin(Φ) cos(Φ) 0; 0.0 0.0 1.0])
-    shift_mat2 = get_shift(midpos) 
-    return shift_mat2 * rot_mat * shift_mat #  
-end
 
 """
     determine_homography_warps(fixed, movings, markers=nothing; patches=nothing, max_shift = 300.0, patch_size=max.(size(fixed) .÷ 5,5), pre_rotate_angles=nothing)
