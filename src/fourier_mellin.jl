@@ -12,16 +12,20 @@ end
     fourier_mellin_align(fixed, movings)
 alignes a collection of `movings` images to a `fixed` image based on the Fourier-Mellin transformation.
 This performs a rigid alignment. The aligned stack including the `fixed` image are returned together with
-`angles`, `zooms`, `shifts` as a tuple indicating the alignment parameters.
+the tuple (`angles`, `zooms`, `shifts`) as a tuple indicating the alignment parameters.
 """
-function fourier_mellin_align(fixed, movings)
+function fourier_mellin_align(fixed, movings; background=nothing)
     result = [make_even(fixed),]
     # angles = [0.0,]
     # zooms = [1.0,]
     # shifts = [(0.0,0.0),]
     all_params = []
     for moving in movings
-        aligned, params = fourier_mellin(moving, fixed)
+        if isnothing(background)
+            aligned, params = fourier_mellin(moving, fixed)
+        else
+            aligned, params = fourier_mellin(moving .- background, fixed.- background)
+        end
         push!(result, aligned)
         # push!(angles, α)
         # push!(zooms, azoom)
@@ -31,12 +35,16 @@ function fourier_mellin_align(fixed, movings)
     return result, all_params
 end
 
+function replace_nan(v::AbstractArray)
+    map(x -> isnan(x) ? zero(x) : x, v)
+end
+
 """
     fourier_mellin(img1, img2; radial_exponent=2.0, subsampling = 4)
 determines scaling, rotation and shift with subpixel precision.
 Note that rotation has to be less than +/- 90 degrees to avoid an abiguity in the interpretation, since the
 absolute Fourier-transformations, on which the Fourier-Melling transformation is based on is ambigous.
-The parameters `α`, `zoom`, `ashift` and the transformed aligned `img1` are returned as a tuple.
+The tuple (`α`, `zoom`, `ashift`) and the transformed aligned `img1` are returned.
 
 #Arguments
 + `img1`:  source image to find transformation for when rotated, zoomed and shifted to the position of `img2`
@@ -76,9 +84,13 @@ function fourier_mellin(img1, img2; radial_exponent=2.0, subsampling = 4)
     # reg = register(f2, f1; upsample_factor=100)
 
     # res = rotate(img1, -α)
-    rotα = t->(cos(α)*t[1] + -sin(α)*t[2] , sin(α)*t[1] + cos(α)*t[2])
-    res = resample_nfft(img1, t -> rotα(t) .* zoom)
 
+    # rotα = t -> (cos(α)*t[1] - sin(α)*t[2], sin(α)*t[1] + cos(α)*t[2])
+    # res = resample_nfft(img1, t -> rotα(t) .* zoom)
+
+    ϕ = get_rigid_warp((α, zoom, [0.0, 0.0]), size(img1))
+    res = replace_nan(warp(img1, ϕ, size(img1)))
+    
     # ashift, err, phasediff = phase_offset(res, img2; upsample_factor=100)
     ashift = find_shift_iter(res, img2) # do not normalize, as this may cause trouble, if the mean is close to zero!
     # println("Angle: $α , zoom: $zoom, shift: $ashift") 
@@ -90,7 +102,7 @@ function fourier_mellin(img1, img2; radial_exponent=2.0, subsampling = 4)
     # @vt img2 res register(img2, res; upsample_factor=100) res2 
 
     # return res2,(α, zoom, ashift)
-    return shift(res, -ashift), (α, zoom, ashift)
+    return shift(res, .-ashift), (α, zoom, ashift) # shift(res, -ashift)
 end
 
 function test_fm()

@@ -319,6 +319,7 @@ function find_shift_iter(dat1, dat2, Δx=nothing) # max_range=nothing, verbose=f
             Δx
         end
     end
+    # @show Δx
 
     dat1, dat2 = shift_cut(dat1, dat2, .-Δx)
     # return dat1, dat2, mycor, Δx

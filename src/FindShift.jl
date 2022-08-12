@@ -5,7 +5,7 @@ export determine_homography_warps, locate_patches, extract_patches, get_default_
 
 export fourier_mellin, fourier_mellin_align
 export find_deformations, align_images
-export extract_sub_images
+export extract_sub_images, replace_nan
 
 using FourierTools, IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore, Statistics
 using FFTW

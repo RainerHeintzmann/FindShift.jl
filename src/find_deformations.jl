@@ -56,17 +56,24 @@ end
     determines the warps between a refrence image `fixed` and one or multiple images `moving` to align to that reference image.
 
 """
-function find_deformations(fixed, movings, grid_size=(5,5); patch_size=max.(size(fixed) .÷ grid_size,5), tolerance = max.(size(fixed) .÷ grid_size,5), pre_transform_params=nothing)
+function find_deformations(fixed, movings, grid_size=(11, 11); patch_size=max.(size(fixed) .÷ grid_size,5), tolerance = max.(size(fixed) .÷ grid_size,5), pre_transform_params=nothing)
     nodes = get_default_markers(fixed, grid_size)
     ref_patches, markers = extract_patches(fixed, patch_size=patch_size; grid_size=grid_size)
     @show size(markers)
 
-    all_aligned = [fixed,]
+    # all_aligned = [fixed,]
     warps = []
     ni = 1
     for moving in movings
         search_in, markers = extract_patches(moving, patch_size=patch_size .+ tolerance; grid_size=grid_size)
         myshifts = zeros((2,grid_size...))
+        w = let
+            if isnothing(pre_transform_params)
+                nothing
+            else
+                get_rigid_warp(pre_transform_params[ni], size(moving))
+            end
+        end
         n = 1
         for ci in CartesianIndices(grid_size)
             ci = Tuple(ci)
@@ -77,10 +84,16 @@ function find_deformations(fixed, movings, grid_size=(5,5); patch_size=max.(size
                 ps = search_in[n]
                 myshift = find_shift_iter(pr, ps)
                 myshifts[:,ci...] .= .-myshift
+                if isnothing(pre_transform_params)
+                    myshifts[:,ci...] .= .-myshift
+                else # account for the rigid pre-transform 
+                    marker = markers[n]
+                    myshifts[:,ci...] .= (w(marker) .- marker) .- myshift
+                end
                 n = n + 1
             end
         end
-        # copy inner bit to borders
+        # copy inner bit to borders 
         for ci in CartesianIndices(grid_size)
             ci = Tuple(ci)
             cn = clamp.(ci, 2, grid_size.-1)
@@ -89,16 +102,19 @@ function find_deformations(fixed, movings, grid_size=(5,5); patch_size=max.(size
         # @show myshifts
         ϕ = GridDeformation(myshifts, nodes)
 
-        warped = warp(moving, ϕ) # , axes(moving1)
-        push!(all_aligned, warped)
+        # warped = warp(moving, ϕ) # , axes(moving1)
+        # push!(all_aligned, warped)
 
-        if !isnothing(pre_transform_params)
-            ϕ = ϕ ∘ get_rigid_warp(pre_transform_params[ni], size(moving))
-        end
+        # if !isnothing(pre_transform_params)            
+        #     w = get_rigid_warp(pre_transform_params[ni], size(moving))
+        #     push!(warps, ϕ) # (x) -> ϕi(w(x))
+        # else
+        #     push!(warps, ϕ)
+        # end
         push!(warps, ϕ)
         ni += 1
     end
-    return all_aligned, warps
+    return warps
 end
 
 
@@ -130,10 +146,10 @@ end
     get_rotation(sz::Tuple, Φ)
     returns a rotation operation in homography coordinates by the angle `Φ` in rad, which accounts for the middle pixel kept unchanged.
 """
-function get_rotation(sz::Tuple, Φ)
+function get_rotation(sz::Tuple, Φ, zoom=1.0)
     midpos = (sz .÷2) .+1
     shift_mat = get_shift(.-midpos)
-    rot_mat = SMatrix{3,3}([cos(Φ) -sin(Φ) 0; sin(Φ) cos(Φ) 0; 0.0 0.0 1.0])
+    rot_mat = SMatrix{3,3}([zoom .* cos(Φ) -zoom .* sin(Φ) 0; zoom .* sin(Φ) zoom .* cos(Φ) 0; 0.0 0.0 1.0])
     shift_mat2 = get_shift(midpos) 
     return shift_mat2 * rot_mat * shift_mat #  
 end
@@ -148,23 +164,27 @@ end
 """
 function get_rigid_warp(params, asize)
     (α, zoom, myshift) = params
-    M = zoom .* get_rotation(asize, α) # [cos(α) -sin(α); sin(α) cos(α)]
-    M = M .+ SMatrix{3,3}([0 0 myshift[1];0 0 myshift[2];0 0 0])
+    M = get_rotation(asize, α, zoom) # [cos(α) -sin(α); sin(α) cos(α)]
+    # the order of the line below may look surprising but the warps seem to work backwards
+    M = M * SMatrix{3,3}([1.0 0.0 myshift[1];0.0 1.0 myshift[2];0.0 0.0 1.0])
     ϕ(x) = (M*[x...,1])[1:2] # AffineMap(M, myshift)
     return ϕ
-end
+end 
 
 function band_pass(img, s, e) 
     gaussf(img,s) .- gaussf(img,e)
 end
 
-function align_images(img_list; average_pos=true, band_pass_freq=0.25, grid_size=(11,11))
+function align_images(img_list; average_pos=true, band_pass_freq=0.25, grid_size=(10,10))
     filtered = []
     s = 0.8 ./ band_pass_freq
     e = 1.2 ./ band_pass_freq
+    # do_resize(img) = select_region(img, new_size = round.(Int, size(img) .* grid_size ./ (grid_size .- 2)))
+    do_resize(img) = img
+
     for img in img_list
         f = band_pass(img, s, e)
-        push!(filtered, f)
+        push!(filtered, do_resize(f))
     end
     reference = filtered[1]
     movings = filtered[2:end]
@@ -172,7 +192,8 @@ function align_images(img_list; average_pos=true, band_pass_freq=0.25, grid_size
     # patch_size=max.(size(fixed) .÷ 8,5)
 
     rigidly_aligned, params = fourier_mellin_align(reference, movings)
-    all_aligned, warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:4], grid_size, pre_transform_params=params)
-    # all_aligned = [img_list[1], [warp(img_list[n+1], warps[n], size(img_list[n+1])) for n=1:length(img_list)-1]...]
-    return all_aligned, warps 
+    warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:4], grid_size, pre_transform_params=params)
+    warped = [replace_nan(warp(do_resize(img_list[n+1]), warps[n])) for n=1:length(img_list)-1]
+    all_aligned = [do_resize(img_list[1]), warped...]
+    return all_aligned, warps #   
 end
