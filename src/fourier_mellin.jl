@@ -15,11 +15,9 @@ This performs a rigid alignment. The aligned stack including the `fixed` image a
 the tuple (`angles`, `zooms`, `shifts`) as a tuple indicating the alignment parameters.
 """
 function fourier_mellin_align(fixed, movings; background=nothing)
-    result = [make_even(fixed),]
-    # angles = [0.0,]
-    # zooms = [1.0,]
-    # shifts = [(0.0,0.0),]
+    result = [FindShift.make_even(fixed),]
     all_params = []
+    push!(all_params,(0.0,1.0,(0.0,0.0)))
     for moving in movings
         if isnothing(background)
             aligned, params = fourier_mellin(moving, fixed)
@@ -27,9 +25,6 @@ function fourier_mellin_align(fixed, movings; background=nothing)
             aligned, params = fourier_mellin(moving .- background, fixed.- background)
         end
         push!(result, aligned)
-        # push!(angles, α)
-        # push!(zooms, azoom)
-        # push!(shifts, Tuple(ashift))
         push!(all_params, params)
     end
     return result, all_params
@@ -60,8 +55,8 @@ function fourier_mellin(img1, img2; radial_exponent=2.0, subsampling = 4)
     period = 180 #
     fm_map(αr) = (0.5*exp(radial_exponent * (αr[2] - 0.5)) * cosd(period*αr[1]), 0.5 * exp(radial_exponent * (αr[2] - 0.5)) * sind(period*αr[1]))
 
-    img1 = make_even(img1)
-    img2 = make_even(img2)
+    img1 = FindShift.make_even(img1)
+    img2 = FindShift.make_even(img2)
     f1 = abs.(nfft_nd(img1, fm_map, szt)) 
     f2 = abs.(nfft_nd(img2, fm_map, szt)) 
     # f_one = abs.(nfft_nd(ones(size(img1)), fm_map, szt)) 
@@ -73,7 +68,7 @@ function fourier_mellin(img1, img2; radial_exponent=2.0, subsampling = 4)
 
     f1 ./= sum(f1) # .* (f_one .+ maximum(f_one)./5)
     f2 ./= sum(f2) # .* (f_one .+ maximum(f_one)./5)
-
+    # return f1, f2
     # @vt f1 f2
     # @show ashift, err, phasediff = phase_offset(f2, f1; upsample_factor=100)
     ashift = find_shift_iter(f2, f1)

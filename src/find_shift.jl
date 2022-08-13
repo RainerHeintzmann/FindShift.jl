@@ -268,13 +268,15 @@ function find_ft_shift_iter(fdat1, fdat2; max_range=nothing, verbose=false, myno
         end
     end
     # res.minimizer[2:end], res.minimizer[1]
-    res.minimizer
+    # return the result modulo the image size. Sometimes the optimization finds a multiple of this.
+    pos_sign = (res.minimizer .>= 0).*2 .-1 # a sign that cannot become zero
+    return mod.(res.minimizer, pos_sign .* size(fdat1))
 end
 
 # using View5D
 
 """
-    find_ft_shift_iter(dat1, dat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
+    find_shift_iter(dat1, dat2, Δx=nothing)
     finds the shift between two input images by minimizing the distance.
     To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
     Therefore `dat1` and `dat2` have to the the FFTs of the data. 
@@ -321,12 +323,19 @@ function find_shift_iter(dat1, dat2, Δx=nothing) # max_range=nothing, verbose=f
     end
     # @show Δx
 
-    dat1, dat2 = shift_cut(dat1, dat2, .-Δx)
+    dat1c, dat2c = shift_cut(dat1, dat2, .-Δx)
     # return dat1, dat2, mycor, Δx
-    win = window_hanning(size(dat1), border_in=0.0)
+    win = window_hanning(size(dat1c), border_in=0.0)
 
-    sub = find_ft_shift_iter(ft(win .* dat1), ft(win .* dat2))
-    Δx .+ sub # , 1 ./scale
+    # @show any(isnan.(win .* dat1c))
+    # @show any(isnan.(win .* dat2c))
+    sub = find_ft_shift_iter(ft(win .* dat1c), ft(win .* dat2c))
+    if norm(sub) > 2.0
+        @warn "Problem in maximizing correlation. Using integer maximum instead."
+        return Δx
+    else
+        return Δx .+ sub # , 1 ./scale
+    end
 end
 
 
@@ -359,7 +368,11 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, 
     end
     k_est = Float64.([k_est...])
     v_init = sqrt(abs2_ft_peak(win .* dat, k_est))
-    wdat ./= v_init
+    if v_init != 0.0
+        wdat ./= v_init
+    else
+        @warn "FT peak is zero."
+    end
 
     mynorm2(x) = -abs2_ft_peak(wdat, x)  # to normalize the data appropriately
     #@show mynorm(k_est)

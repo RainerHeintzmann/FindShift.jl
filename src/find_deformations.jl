@@ -32,13 +32,27 @@ end
 + patch_size:   tuple denoting the size of each patch
 
 """
-function extract_patches(img, markers=nothing; grid_size=(5,5), patch_size=max.(size(img) .÷ 5,5))
+function extract_patches(img, markers=nothing; grid_size=(5,5), patch_size=max.(size(img) .÷ 5,5), avoid_border=true)
     patches = []
     markers = let
         if isnothing(markers)
             nodes = get_default_markers(img, grid_size)
             # omit the borders markers
-            [floor.(Int,(nodes[1][n], nodes[2][m])) for m = 2:grid_size[2]-1 for n = 2:grid_size[1]-1]
+            if avoid_border
+                mar = [floor.(Int,(nodes[1][n], nodes[2][m])) for m = 2:grid_size[2]-1 for n = 2:grid_size[1]-1]
+            else
+                mar = []
+                for m = 1:grid_size[2] 
+                    for n = 1:grid_size[1]
+                        m1 = (nodes[1][n], nodes[2][m])
+                        m2 = (nodes[1][clamp(n,1,grid_size[1]-1)], nodes[2][clamp(m,1,grid_size[2]-1)])
+                        push!(mar,floor.(Int,(m1 .+ m2)./2))
+                    end
+                end
+                # mar = [floor.(Int,(nodes[1][n], nodes[2][m])) for m = 1:grid_size[2] for n = 1:grid_size[1]]
+                mar
+            end
+
             # the line above leads to deformantions. This can be fixed.
         else
             markers
@@ -56,33 +70,38 @@ end
     determines the warps between a refrence image `fixed` and one or multiple images `moving` to align to that reference image.
 
 """
-function find_deformations(fixed, movings, grid_size=(11, 11); patch_size=max.(size(fixed) .÷ grid_size,5), tolerance = max.(size(fixed) .÷ grid_size,5), pre_transform_params=nothing)
+function find_deformations(fixed, movings, grid_size=(11, 11); patch_size=max.(size(fixed) .÷ grid_size,5), tolerance = max.(size(fixed) .÷ grid_size,5), pre_transform_params=nothing, avoid_border=false, warn_norm=10.0)
     nodes = get_default_markers(fixed, grid_size)
-    ref_patches, markers = extract_patches(fixed, patch_size=patch_size; grid_size=grid_size)
-    @show size(markers)
+    ref_patches, markers = extract_patches(fixed, patch_size=patch_size; grid_size=grid_size, avoid_border=avoid_border)
 
-    # all_aligned = [fixed,]
     warps = []
     ni = 1
     for moving in movings
-        search_in, markers = extract_patches(moving, patch_size=patch_size .+ tolerance; grid_size=grid_size)
+        search_in, markers = extract_patches(moving, patch_size=patch_size .+ tolerance; grid_size=grid_size, avoid_border=avoid_border)
         myshifts = zeros((2,grid_size...))
         w = let
             if isnothing(pre_transform_params)
                 nothing
             else
-                get_rigid_warp(pre_transform_params[ni], size(moving))
+                FindShift.get_rigid_warp(pre_transform_params[ni], size(moving))
             end
         end
         n = 1
         for ci in CartesianIndices(grid_size)
             ci = Tuple(ci)
             # measures the difference compared to the middle of each patch, since it expands to the larger size.
-            cn = clamp.(ci, 2, grid_size.-1)
+            if avoid_border
+                cn = clamp.(ci, 2, grid_size.-1)
+            else
+                cn = ci
+            end
             if ci == cn # only calculate shift where needed and copy the border shifts
                 pr = ref_patches[n]
                 ps = search_in[n]
                 myshift = find_shift_iter(pr, ps)
+                if norm(myshift) > warn_norm
+                    @warn "large shift $(norm(myshift))>$(warn_norm) at postion $(ci) of $(grid_size)."
+                end
                 myshifts[:,ci...] .= .-myshift
                 if isnothing(pre_transform_params)
                     myshifts[:,ci...] .= .-myshift
@@ -94,23 +113,16 @@ function find_deformations(fixed, movings, grid_size=(11, 11); patch_size=max.(s
             end
         end
         # copy inner bit to borders 
-        for ci in CartesianIndices(grid_size)
-            ci = Tuple(ci)
-            cn = clamp.(ci, 2, grid_size.-1)
-            myshifts[:,ci...] .= myshifts[:,cn...]
+        if avoid_border
+            for ci in CartesianIndices(grid_size)
+                ci = Tuple(ci)
+                cn = clamp.(ci, 2, grid_size.-1)
+                myshifts[:,ci...] .= myshifts[:,cn...]
+            end
         end
         # @show myshifts
         ϕ = GridDeformation(myshifts, nodes)
 
-        # warped = warp(moving, ϕ) # , axes(moving1)
-        # push!(all_aligned, warped)
-
-        # if !isnothing(pre_transform_params)            
-        #     w = get_rigid_warp(pre_transform_params[ni], size(moving))
-        #     push!(warps, ϕ) # (x) -> ϕi(w(x))
-        # else
-        #     push!(warps, ϕ)
-        # end
         push!(warps, ϕ)
         ni += 1
     end
@@ -175,7 +187,7 @@ function band_pass(img, s, e)
     gaussf(img,s) .- gaussf(img,e)
 end
 
-function align_images(img_list; average_pos=true, band_pass_freq=0.25, grid_size=(10,10))
+function align_images(img_list; average_pos=true, band_pass_freq=0.25, grid_size=(10,10), patch_size=max.(size(img_list[1]) .÷ grid_size,5), tolerance=max.(size(img_list[1]) .÷ grid_size,5), avoid_border=false, warn_norm=10.0)
     filtered = []
     s = 0.8 ./ band_pass_freq
     e = 1.2 ./ band_pass_freq
@@ -188,11 +200,13 @@ function align_images(img_list; average_pos=true, band_pass_freq=0.25, grid_size
     end
     reference = filtered[1]
     movings = filtered[2:end]
-    
-    # patch_size=max.(size(fixed) .÷ 8,5)
+    # return filtered # 
+    # patch_size=max.(size(img_list[1]) .÷ 8,5)
 
     rigidly_aligned, params = fourier_mellin_align(reference, movings)
-    warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:4], grid_size, pre_transform_params=params)
+    # return rigidly_aligned, params
+
+    warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:4], grid_size, patch_size=patch_size, pre_transform_params=params[2:end], avoid_border=avoid_border, tolerance=tolerance, warn_norm=warn_norm)
     warped = [replace_nan(warp(do_resize(img_list[n+1]), warps[n])) for n=1:length(img_list)-1]
     all_aligned = [do_resize(img_list[1]), warped...]
     return all_aligned, warps #   
