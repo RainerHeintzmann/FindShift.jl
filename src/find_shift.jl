@@ -5,32 +5,39 @@
 function exp_shift(sz, k_0)
     # mymid = (sz.÷2).+1
     pvec = k_0 ./ sz;
-    separable_view((p, pvec) -> exp((1im*2pi) * pvec * p), sz, pvec)
+    fct = (p, pvec) -> exp((1im*2pi) * pvec * p)
+    separable_view(fct, sz, pvec)
     # [exp((1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(sz)]
 end
 
 function exp_shift_dat(dat, k_0)
     sz = size(dat)
     # mymid = (sz.÷2).+1
-    pvec = k_0 ./ sz;
+    pvec = 2pi .* k_0 ./ sz;
     # [dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat)]
-    dat .* separable_view((p, pvec) -> exp((-1im*2pi) * pvec * p), sz, pvec)
+    # the collect below, makes it faster
+    fct = (p, pvec) -> exp(-1im * pvec * p)
+    sv = separable_view(fct, sz, pvec)
+    # @show size(sv)
+    LazyArray(@~ dat .* sv)
 end
 
  # define custom adjoint for sum_exp_shift
- function ChainRulesCore.rrule(::typeof(exp_shift_dat), dat, k_0)
-    Z = exp_shift_dat(dat, k_0)
-
-    exp_shift_dat_pullback = let sz = size(dat)
-        mymid = (sz.÷2).+1
-        times_pos(p,d) = (p .-mymid) .* d
+ function ChainRulesCore.rrule(::typeof(exp_shift_dat), dat::AbstractArray{T,D}, k_0) where {T,D}
+    # collecting is worth it, since the pullback also needs this result
+    Z = collect(exp_shift_dat(dat, k_0)) # this yields an array view
+    exp_shift_dat_pullback = let sz = size(dat), mymid = (sz.÷2).+1
         function exp_shift_dat_pullback(barx)
-            pvec = 2pi * k_0 ./ sz; # is a cast to Vector helpful?
-            res = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), 
-                    barx .* conj.(dat .* separable_view((p, pvec) -> exp(-1im * pvec * p), sz, pvec))))
+            #pvec = 2pi * k_0 ./ sz; # is a cast to Vector helpful?
+            #Z2 = dat .* separable_view((p, pvec) -> exp(-1im * pvec * p), sz, pvec)
+            # @time res = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), 
+            #           barx .* conj.(Z)))
+            # @show size(barx) 
+            # @time res = sum_t(apply_tuple_list.(times_pos, mypos, barx .* conj.(Z)))
+            q = ((Tuple(p) .- mymid) .* (b .* conj.(z))  for (p,b,z) in zip(CartesianIndices(sz), barx, Z))
+            res = foldl(.+, q, init=Tuple(zeros(T,D)))
             res = 1im .* res .* 2pi ./ sz
             #@show res
-            #@show barx
             return NoTangent(), NoTangent(), res # res # apply_tuple_list.(.*, res, barx) # (ChainRulesCore.@not_implemented "Save computation"), 
         end
     end
@@ -81,15 +88,15 @@ function sum_res_i_old(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
     res_i
 end
 
-function t_imag(t1)
+function t_imag(t1::NTuple{N,T}) where {N,T}
     imag.(t1)
 end
 
-function t_sum(t1, t2)
+function t_sum(t1::NTuple{N,T}, t2::NTuple{N,T}) where {N,T}
     t1 .+ t2
 end
 
-function sum_t(ts)
+function sum_t(ts::AbstractArray{T,D}) where {T,D}
     reduce(t_sum, ts)
 end
 
@@ -218,19 +225,20 @@ julia> my_gaussian = separable_view( (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2
  6.50731e-5   0.000356206  0.000717312  0.000531398  0.000144823
 ```
 """
-function separable_view(fct, sz, args...)
+function separable_view(fct, sz::NTuple{N, Int}, args...) where {N}
     first_args = arg_n(1, args)
     start = -sz[1].÷2 
     idc = start:start+sz[1]-1
-    res = collect(fct.(idc,first_args...))
-    for d = 2:length(sz)
+    res = []
+    push!(res, collect(fct.(idc, first_args...)))
+    for d = 2:N
         start = -sz[d].÷2 
         idc = start:start+sz[d]-1
         myaxis = collect(reorient(fct.(idc,arg_n(d, args)...), d))
         # LazyArray representation of expression
-        res = LazyArray(@~ res .* myaxis)
+        push!(res, myaxis)
     end
-    res
+    LazyArray(@~ .*(res...)) # multiply them all together
 end
 
 function exp_shift_sep(sz, k_0)
@@ -251,7 +259,7 @@ end
 function find_ft_shift_iter(fdat1, fdat2; max_range=nothing, verbose=false, mynorm=dist_sqr)
     # loss(v) = mynorm(fdat1, v[1].*exp_shift_dat(fdat2,v[2:end])) 
     win = 1.0 # window_hanning(size(fdat2), border_in=0.0, border_out=1.0)  # window in frequency space
-    loss(v) = mynorm(fdat1, win .* exp_shift_dat(fdat2,v)) 
+    loss(v) = mynorm(fdat1, exp_shift_dat(fdat2, v)) # win .* 
     function g!(G, x)  # (G, x)
         G .= gradient(loss, x)[1]
     end
