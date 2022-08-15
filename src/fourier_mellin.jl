@@ -1,23 +1,14 @@
-function even_size(sz)
-    sz.÷2 .*2
-end
-
-# using FourierTools, TestImages, NDTools, View5D, IndexFunArrays
-#using SubpixelRegistration
-function make_even(img)
-    select_region(img, new_size=even_size(size(img)))
-end
-
 """
     fourier_mellin_align(fixed, movings)
 alignes a collection of `movings` images to a `fixed` image based on the Fourier-Mellin transformation.
 This performs a rigid alignment. The aligned stack including the `fixed` image are returned together with
 the tuple (`angles`, `zooms`, `shifts`) as a tuple indicating the alignment parameters.
 """
-function fourier_mellin_align(fixed, movings; background=nothing)
+function fourier_mellin_align(fixed::AbstractArray{T,N}, movings::AbstractVector{T2}; background=nothing) where {T,N,T2}
     result = [FindShift.make_even(fixed),]
     all_params = []
-    push!(all_params,(0.0,1.0,(0.0,0.0)))
+    RT = real(T)
+    push!(all_params,(RT(0.0),RT(1.0),Tuple(zeros(RT,2))))
     for moving in movings
         if isnothing(background)
             aligned, params = fourier_mellin(moving, fixed)
@@ -28,10 +19,6 @@ function fourier_mellin_align(fixed, movings; background=nothing)
         push!(all_params, params)
     end
     return result, all_params
-end
-
-function replace_nan(v::AbstractArray)
-    map(x -> isnan(x) ? zero(x) : x, v)
 end
 
 """
@@ -47,13 +34,13 @@ The tuple (`α`, `zoom`, `ashift`) and the transformed aligned `img1` are return
 + `radial_exponent`:  determines the weighting of the alignment in dependence on the radial frequency.
 + `subsampling`: Determines how coarse or fine the Melling transform, which is based on `nfft_nd` from the FourierTools.jl package, is sampled.
 """
-function fourier_mellin(img1, img2; radial_exponent=2.0, subsampling = 4)
+function fourier_mellin(img1::AbstractArray{T,N}, img2::AbstractArray{T,N}; radial_exponent=2.0, subsampling = 4) where {T,N}
     ms = maximum(size(img1))
     szt = (ms, ms) .÷ subsampling
-
+    RT = real(T)
     # the factor below determines the  radius weighting
     period = 180 #
-    fm_map(αr) = (0.5*exp(radial_exponent * (αr[2] - 0.5)) * cosd(period*αr[1]), 0.5 * exp(radial_exponent * (αr[2] - 0.5)) * sind(period*αr[1]))
+    fm_map(αr) = (RT(0.5)*exp(radial_exponent * (αr[2] - RT(0.5))) * cosd(period*αr[1]), RT(0.5) * exp(radial_exponent * (αr[2] - RT(0.5))) * sind(period*αr[1]))
 
     img1 = FindShift.make_even(img1)
     img2 = FindShift.make_even(img2)
@@ -73,7 +60,7 @@ function fourier_mellin(img1, img2; radial_exponent=2.0, subsampling = 4)
     # @show ashift, err, phasediff = phase_offset(f2, f1; upsample_factor=100)
     ashift = find_shift_iter(f2, f1)
 
-    α = -period*pi/180 * ashift[1]/szt[1]
+    α = -period*RT(pi)/180 * ashift[1]/szt[1]
     zoom = ashift[2]/szt[2]
     zoom = exp(radial_exponent * zoom)
     # reg = register(f2, f1; upsample_factor=100)
@@ -83,7 +70,7 @@ function fourier_mellin(img1, img2; radial_exponent=2.0, subsampling = 4)
     # rotα = t -> (cos(α)*t[1] - sin(α)*t[2], sin(α)*t[1] + cos(α)*t[2])
     # res = resample_nfft(img1, t -> rotα(t) .* zoom)
 
-    ϕ = get_rigid_warp((α, zoom, [0.0, 0.0]), size(img1))
+    ϕ = get_rigid_warp((α, zoom, [RT(0.0), RT(0.0)]), size(img1))
     res = replace_nan(warp(img1, ϕ, size(img1)))
     
     # ashift, err, phasediff = phase_offset(res, img2; upsample_factor=100)
@@ -98,20 +85,4 @@ function fourier_mellin(img1, img2; radial_exponent=2.0, subsampling = 4)
 
     # return res2,(α, zoom, ashift)
     return shift(res, .-ashift), (α, zoom, ashift) # shift(res, -ashift)
-end
-
-function test_fm()
-    img1 = Float32.(testimage("resolution"));
-    img2 = shift(resample_nfft(rotate(img1, 72.0), t->1.7 .*t), (10.2,52.3));
-
-    img3, param = fourier_mellin(img2, img1)
-    # img4, param = fourier_mellin(img3, img1)
-    # @vt img1 img2, img3
-
-    nimg1 = poisson(img1, 10)
-    nimg2 = poisson(img2, 10)
-
-    nimg3, param = fourier_mellin(nimg2, nimg1)
-    # @vt nimg1 nimg2, nimg3
-
 end

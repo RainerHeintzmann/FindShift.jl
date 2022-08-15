@@ -1,160 +1,6 @@
 # add FourierTools,IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore
 # add View5D, TestImages, Noise, FiniteDifferences
 
-# since Zygote cannot deal with exp_ikx from the IndexFunArray Toolbox, here is an alternative
-function exp_shift(sz, k_0)
-    # mymid = (sz.÷2).+1
-    pvec = k_0 ./ sz;
-    fct = (p, pvec) -> exp((1im*2pi) * pvec * p)
-    separable_view(fct, sz, pvec)
-    # [exp((1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(sz)]
-end
-
-function exp_shift_dat(dat, k_0)
-    sz = size(dat)
-    # mymid = (sz.÷2).+1
-    pvec = 2pi .* k_0 ./ sz;
-    # [dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat)]
-    # the collect below, makes it faster
-    fct = (p, pvec) -> exp(-1im * pvec * p)
-    sv = separable_view(fct, sz, pvec)
-    # @show size(sv)
-    LazyArray(@~ dat .* sv)
-end
-
- # define custom adjoint for sum_exp_shift
- function ChainRulesCore.rrule(::typeof(exp_shift_dat), dat::AbstractArray{T,D}, k_0) where {T,D}
-    # collecting is worth it, since the pullback also needs this result
-    Z = collect(exp_shift_dat(dat, k_0)) # this yields an array view
-    exp_shift_dat_pullback = let sz = size(dat), mymid = (sz.÷2).+1
-        function exp_shift_dat_pullback(barx)
-            #pvec = 2pi * k_0 ./ sz; # is a cast to Vector helpful?
-            #Z2 = dat .* separable_view((p, pvec) -> exp(-1im * pvec * p), sz, pvec)
-            # @time res = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), 
-            #           barx .* conj.(Z)))
-            # @show size(barx) 
-            # @time res = sum_t(apply_tuple_list.(times_pos, mypos, barx .* conj.(Z)))
-            q = ((Tuple(p) .- mymid) .* (b .* conj.(z))  for (p,b,z) in zip(CartesianIndices(sz), barx, Z))
-            res = foldl(.+, q, init=Tuple(zeros(T,D)))
-            res = 1im .* res .* 2pi ./ sz
-            #@show res
-            return NoTangent(), NoTangent(), res # res # apply_tuple_list.(.*, res, barx) # (ChainRulesCore.@not_implemented "Save computation"), 
-        end
-    end
-   # @show abs2(Y)
-    return Z, exp_shift_dat_pullback
-end
-
-
-function sum_exp_shift(dat, k_0)
-    sz = size(dat)
-    # mymid = (sz.÷2).+1
-    pvec = k_0 ./ sz;
-    # sum(dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
-    sum(dat .* separable_view((p, pvec) -> exp((-1im*2pi) * pvec * p), sz, pvec))
-end
-
-function sum_exp_shift_ix(dat, k_0)
-    sz = size(dat)
-    mymid = (sz.÷2).+1
-    pvec = k_0 ./ sz;
-    accumulate(.+, dat[p] .* Tuple(p) .* exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
-end
-
-"""
-    sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
-    a helper function for the gradient of a sum over an exponential
-"""
-function sum_res_i_old(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
-    mymid = (size(dat).÷2).+1
-    s1 = sum(conj(dat[p]) * exp(1im * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
-    s1_i = imag.(s1)
-    s1_r = real.(s1)
-    s2 = zeros(ComplexF64, D)
-    x = zeros(Float64, D)
-    res_i = zeros(Float64, D)
-    s2_r = zeros(Float64, D) 
-    s2_i = zeros(Float64, D) 
-
-    sp = zero(eltype(pvec))
-    for p in  CartesianIndices(dat)
-        x .= Tuple(p) .- mymid
-        sp = dot(pvec, x)
-        s2 .= x .* (dat[p] .* exp.(-1im .* sp))
-        s2_r .= real.(s2)
-        s2_i .= imag.(s2)
-        res_i .+= s1_i.*s2_r .+ s1_r .* s2_i
-    end
-    res_i
-end
-
-function t_imag(t1::NTuple{N,T}) where {N,T}
-    imag.(t1)
-end
-
-function t_sum(t1::NTuple{N,T}, t2::NTuple{N,T}) where {N,T}
-    t1 .+ t2
-end
-
-function sum_t(ts::AbstractArray{T,D}) where {T,D}
-    reduce(t_sum, ts)
-end
-
-"""
-    sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
-    a helper function for the gradient of a sum over an exponential
-"""
-function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
-    sz = size(dat)
-    mymid = (sz.÷2).+1
-    s1 = sum(conj.(dat) .* separable_view((p, pvec) -> exp((1im) * pvec * p), sz, pvec))
-    # s2 = sum_t(apply_tuple_list.(.*, idx(sz), dat .* separable_view((p, pvec) -> exp((-1im) * pvec * p), sz, pvec)))
-    times_pos(p,d) = (p .-mymid) .* d
-    s2 = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), dat .* separable_view((p, pvec) -> exp((-1im) * pvec * p), sz, pvec)))
-    t_imag.(s1 .* s2)
-
-    #res =  sum_t(t_imag.(apply_tuple_list.(.*,idx(sz), s1 .* dat .* separable_view((p, pvec) -> exp((-1im * pvec * p)), sz, pvec))))
-    # (Tuple.(CartesianIndices(sz)) .- mymid)
-end
-
-"""
-    abs2_ft_peak(dat, k_cur, dims=(1,2))
-estimates the complex value of a sub-pixel position defined by `k_cur` in the Fourier-transform of `dat`.
-"""
-function abs2_ft_peak(dat, k_cur)
-    abs2(sum_exp_shift(dat, Tuple(k_cur)))
-end
-
- # define custom adjoint for sum_exp_shift
- function ChainRulesCore.rrule(::typeof(abs2_ft_peak), dat, k_cur)
-    # Y = sum_exp_shift(dat, k_cur)
-    Z = abs2_ft_peak(dat, k_cur)
-
-    abs2_ft_peak_pullback = let sz = size(dat)
-        function abs2_ft_peak_pullback(barx)
-            pvec = 2pi .*Vector(k_cur) ./ sz;
-            res_i = sum_res_i(dat, pvec)
-            # res = 2 .*imag.(s1 .* s2) .* 2pi ./ sz
-            res = 2 .* res_i .* 2pi ./ sz
-            return NoTangent(), NoTangent(), barx .* res # (ChainRulesCore.@not_implemented "Save computation"), 
-        end
-    end
-   # @show abs2(Y)
-    return Z, abs2_ft_peak_pullback
-end
-
-function find_max(dat; exclude_zero=true)
-    arr = abs.(dat)
-    mid = center(size(arr), CenterFT)
-    if exclude_zero
-        arr[mid...] = 0
-    end
-    arr[mid...] 
-    m,p = findmax(arr)
-    Tuple(p) .- mid
-end
-
-
 """
     FindMethod
 
@@ -186,60 +32,6 @@ function dist_anscombe(dat1, dat2)
     sum(abs2.(sqrt.(dat1) .- sqrt.(dat2)))
 end
 
-""" 
-    arg_n(n,args...)
-    returns a Tuple of the n^th vector in args
-
-# Example
-```julia
-```
-"""
-function arg_n(n,args)
-    return (a[n] for a in args)
-end
-
-"""
-    separable_view{N}(fct, sz, args...)
-    creates an array view of an N-dimensional separable function.
-    Note that this view consumes much less memory than a full allocation of the collected result.
-    Note also that an N-dimensional calculation expression may be much slower than this view reprentation of a product of N one-dimensional arrays.
-    See the example below.
-    
-# Arguments:
-+ fct: The separable function, with a number of arguments corresponding to `length(args)`, each corresponding to a vector of separable inputs of length N.
-        The first argument of this function is a Tuple corresponding the centered indices.
-+ sz: The size of the N-dimensional array to create
-+ args...: a list of arguments, each being an N-dimensional vector
-
-# Example:
-```julia
-julia> pos = (0.1, 0.2); sigma = (0.5, 1.0);
-
-julia> my_gaussian = separable_view( (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2)), (6,5), (0.1,0.2),(0.5,1.0))
-(6-element Vector{Float64}) .* (1×5 Matrix{Float64}):
- 3.99823e-10  2.18861e-9   4.40732e-9   3.26502e-9   8.89822e-10
- 1.3138e-5    7.19168e-5   0.000144823  0.000107287  2.92392e-5
- 0.00790705   0.0432828    0.0871609    0.0645703    0.0175975
- 0.0871609    0.477114     0.960789     0.71177      0.19398
- 0.0175975    0.0963276    0.19398      0.143704     0.0391639
- 6.50731e-5   0.000356206  0.000717312  0.000531398  0.000144823
-```
-"""
-function separable_view(fct, sz::NTuple{N, Int}, args...) where {N}
-    first_args = arg_n(1, args)
-    start = -sz[1].÷2 
-    idc = start:start+sz[1]-1
-    res = []
-    push!(res, collect(fct.(idc, first_args...)))
-    for d = 2:N
-        start = -sz[d].÷2 
-        idc = start:start+sz[d]-1
-        myaxis = collect(reorient(fct.(idc,arg_n(d, args)...), d))
-        # LazyArray representation of expression
-        push!(res, myaxis)
-    end
-    LazyArray(@~ .*(res...)) # multiply them all together
-end
 
 function exp_shift_sep(sz, k_0)
     pvec = k_0 ./ sz;
@@ -256,23 +48,35 @@ end
     The first image is interpreted as the ground truth, whereas the second as a measurement
     described by the distance norm `mynorm`.
 """
-function find_ft_shift_iter(fdat1, fdat2; max_range=nothing, verbose=false, mynorm=dist_sqr)
+function find_ft_shift_iter(fdat1::AbstractArray{T,N}, fdat2::AbstractArray{T,N}; max_range=nothing, verbose=false, mynorm=dist_sqr, normalize_variance=true) where {T,N}
     # loss(v) = mynorm(fdat1, v[1].*exp_shift_dat(fdat2,v[2:end])) 
-    win = 1.0 # window_hanning(size(fdat2), border_in=0.0, border_out=1.0)  # window in frequency space
+    # win = window_hanning(size(fdat2), border_in=0.0, border_out=1.0)  # window in frequency space
+    if normalize_variance
+        v1 = sum(fdat1.*conj(fdat1))
+        v2 = sum(fdat2.*conj(fdat2))
+        fdat1 = fdat1./sqrt(v1) # to help the optimization
+        fdat2 = fdat2./sqrt(v2) # to help the optimization
+    end
+    init_loss = mynorm(fdat1, fdat2)
+    if init_loss != 0
+        fdat1 = fdat1./sqrt(init_loss) # to help the optimization
+        fdat2 = fdat2./sqrt(init_loss) # to help the optimization
+    end
+
     loss(v) = mynorm(fdat1, exp_shift_dat(fdat2, v)) # win .* 
     function g!(G, x)  # (G, x)
         G .= gradient(loss, x)[1]
     end
     # p_est = [1.0, zeros(ndims(fdat2))...]
-    p_est = zeros(ndims(fdat2))
+    p_est = zeros(real(T), ndims(fdat2))
     od = OnceDifferentiable(loss, g!, p_est)
     res = let
         if !isnothing(max_range)
             lower = k_est .- max_range
             upper = k_est .+ max_range
-            @time optimize(od, lower, upper, p_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
+            optimize(od, lower, upper, p_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
         else
-            @time optimize(od, p_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
+            optimize(od, p_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
         end
     end
     # res.minimizer[2:end], res.minimizer[1]
@@ -282,19 +86,15 @@ function find_ft_shift_iter(fdat1, fdat2; max_range=nothing, verbose=false, myno
 end
 
 # using View5D
-
 """
-    find_shift_iter(dat1, dat2, Δx=nothing)
-    finds the shift between two input images by minimizing the distance.
-    To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
-    Therefore `dat1` and `dat2` have to the the FFTs of the data. 
-    Returned is an estimate of the real space (subpixel) shift.
+find_shift_iter(dat1, dat2, Δx=nothing)
+finds the integer shift with between two input images via the maximum of the cross-correlation.
+Therefore `dat1` and `dat2` have to the the FFTs of the data. 
+Returned is an estimate of the real space integer pixel shift.
 
-    The first image is interpreted as the ground truth, whereas the second as a measurement
-    described by the distance norm `mynorm`.
+The first image is interpreted as the ground truth, whereas the second as a measurement.
 """
-function find_shift_iter(dat1, dat2, Δx=nothing) # max_range=nothing, verbose=false, mynorm=dist_sqr
-    # mycor = irft(rft(dat1) .* conj(rft(dat2)), size(dat1)[1])
+function find_shift(dat1, dat2)
     mycor = let
         if all((size(dat2).-size(dat1)) .== 0)
             if eltype(dat1)<:Real && eltype(dat2)<:Real
@@ -318,13 +118,33 @@ function find_shift_iter(dat1, dat2, Δx=nothing) # max_range=nothing, verbose=f
             cor1
         end
     end
+    if eltype(dat1)<:Real && eltype(dat2)<:Real
+        return find_max(mycor, exclude_zero=false)
+    else
+        return find_max(abs2.(mycor), exclude_zero=false)
+    end
+end
+
+"""
+    find_shift_iter(dat1, dat2, Δx=nothing)
+    finds the shift between two input images by minimizing the distance.
+    To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
+    Therefore `dat1` and `dat2` have to the the FFTs of the data. 
+    Returned is an estimate of the real space (subpixel) shift.
+
+    The first image is interpreted as the ground truth, whereas the second as a measurement
+    described by the distance norm `mynorm`.
+
+#Arguments
++ `dat1`:   source dataset for which the shift towards the destination dataset `dat2` is determined
++ `dat2`:   destination dataset towareds which the shift is determined
++ `Δx`:     an initial estimate of the shift (the default value of `nothing` means that this is automatically determined via a cross-correlation)
+"""
+function find_shift_iter(dat1::AbstractArray{T,N}, dat2::AbstractArray{T,N}, Δx=nothing, normalize_variance=true) where {T,N}# max_range=nothing, verbose=false, mynorm=dist_sqr
+    # mycor = irft(rft(dat1) .* conj(rft(dat2)), size(dat1)[1])
     Δx = let
         if isnothing(Δx)
-            if eltype(dat1)<:Real && eltype(dat2)<:Real
-                find_max(mycor, exclude_zero=false)
-            else
-                find_max(abs2.(mycor), exclude_zero=false)
-            end
+            find_shift(dat1, dat2)
         else
             Δx
         end
@@ -333,12 +153,12 @@ function find_shift_iter(dat1, dat2, Δx=nothing) # max_range=nothing, verbose=f
 
     dat1c, dat2c = shift_cut(dat1, dat2, .-Δx)
     # return dat1, dat2, mycor, Δx
-    win = window_hanning(size(dat1c), border_in=0.0)
+    win = window_hanning(T, size(dat1c), border_in=0.0)
 
     # @show any(isnan.(win .* dat1c))
     # @show any(isnan.(win .* dat2c))
-    sub = find_ft_shift_iter(ft(win .* dat1c), ft(win .* dat2c))
-    if norm(sub) > 2.0
+    sub = find_ft_shift_iter(ft(win .* dat1c), ft(win .* dat2c), normalize_variance=normalize_variance)
+    if norm(sub) > T(2.0) # why is the shift sometimes > 1.0 ? Maybe since the norm and the normalization is different?
         @warn "Problem in maximizing correlation. Using integer maximum instead."
         return Δx
     else
@@ -357,14 +177,15 @@ function shift_cut(dat1, dat2, Δx)
     sz1 = size(dat1)
     sz2 = size(dat2)
     szn =  min.(sz1 .- abs.(Δx), sz2)
-    ctrn = (szn .÷2) .+ 1
+    # ctrn = (szn .÷2) .+ 1
     c1 = (sz1 .÷2).+1 .- Δx # ifelse.(Δx .> 0, ctrn, (2 .* sz1 .- szn) .÷2 .+1)
     c2 = (sz2 .÷2).+1 # ifelse.(Δx .> 0, (2 .* sz2 .- szn) .÷2 .+1, ctrn)
     return select_region(dat1, center = c1, new_size=szn), select_region(dat2, center = c2, new_size=szn)
 end
 
-function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false)
-    win = collect(window_hanning(size(dat), border_in=0.0))
+function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false) where{T,N}
+    RT = real(T)
+    win = collect(window_hanning(RT, size(dat), border_in=0.0))
     wdat = win .* dat 
 
     k_est = let
@@ -374,7 +195,7 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, 
             k_est
         end
     end
-    k_est = Float64.([k_est...])
+    k_est = RT.([k_est...])
     v_init = sqrt(abs2_ft_peak(win .* dat, k_est))
     if v_init != 0.0
         wdat ./= v_init
@@ -415,8 +236,6 @@ function find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, 
     res.minimizer
 end
 
-
-
 """
 find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
 localizes the peak in Fourier-space with sub-pixel accuracy using an iterative fitting routine.
@@ -434,15 +253,16 @@ localizes the peak in Fourier-space with sub-pixel accuracy using an iterative f
 + exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
 + scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
 """
-function find_ft_peak(dat, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10, verbose=false)
+function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10, verbose=false) where{T,N}
     fdat = ft(dat)
+    RT = real(T)
     k_est = let
         if isnothing(k_est)
             if interactive
                 pos = get_positions(fdat, overwrite=overwrite)
                 pos[1] .- (size(dat).÷ 2 .+1)
             else
-                Float64.(find_max(fdat, exclude_zero=exclude_zero))
+                RT.(find_max(fdat, exclude_zero=exclude_zero))
             end
         else
             k_est
@@ -485,7 +305,8 @@ julia> dat_aligned, shifts = align_stack(dats);
 juliat> shifts .- sh 
 ```
 """
-function align_stack(dat; refno=nothing, ref = nothing, damp=0.1, max_freq=0.4, dim=ndims(dat), method=:FindIter, shifts=nothing)
+function align_stack(dat::AbstractArray{T,N}; refno=nothing, ref = nothing, damp=0.1, max_freq=0.4, dim=ndims(dat), method=:FindIter, shifts=nothing) where{T,N}
+    RT = real(T)
     refno = let
         if isnothing(refno)
             refno=size(dat)[dim] ÷2 +1
@@ -504,8 +325,8 @@ function align_stack(dat; refno=nothing, ref = nothing, damp=0.1, max_freq=0.4, 
 		end
 	end
 	# damp_edge_outside(ref, damp)
-	wh = window_hanning(size(ref), border_in=0.0, border_out=1.0-damp)
-	fwin = window_radial_hanning(size(ref), 		 
+	wh = window_hanning(RT, size(ref), border_in=0.0, border_out=1.0-damp)
+	fwin = window_radial_hanning(RT, size(ref), 		 
   		border_in=max_freq*0.8,border_out=max_freq*1.2)
 		# rr(size(ref)) .< maxfreq .* size(ref)[1]
 	imgs = []
@@ -638,19 +459,20 @@ end
 
 # now we try to find the subpixel position using a chirped z-transform
 
-function get_subpixel_patch(cor, p_est; scale=10, roi_size=4)
+function get_subpixel_patch(cor::AbstractArray{T,N}, p_est; scale=10, roi_size=4) where{T,N}
+    RT = real(T)
     p_mid = size(cor).÷2 .+ 1
     new_size = min.(roi_size .* scale, size(cor))
     roi = select_region(cor,center=p_mid.+p_est,new_size=new_size)  # (iczt(fc .* exp_ikx(size(cor)[1:2], shift_by=.-p_est), scale)
     # return roi
-    fc = ft2d(roi .* window_hanning(size(roi), border_in=0.0))
+    fc = ft2d(roi .* window_hanning(RT, size(roi), border_in=0.0))
     # fc = ft2d(roi)
-    scale = scale .* ones(ndims(cor))
+    scale = scale .* ones(RT, ndims(cor))
     roi = iczt(fc, scale, (1,2))
     return roi
 end
 
-function get_subpixel_peak(cor, p_est=nothing; exclude_zero=true, scale=10, roi_size=4, abs_first=false, dim=3)
+function get_subpixel_peak(cor::AbstractArray{T,N}, p_est=nothing; exclude_zero=true, scale=10, roi_size=4, abs_first=false, dim=3) where{T,N}
     p_est = let
         if isnothing(p_est)
             find_max(cor, exclude_zero=exclude_zero)
@@ -678,8 +500,4 @@ function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsamp
     optim_correl(up, up_other, k_est=k_est)
 end
 
-# hf enhancement for better visualization and peak finding
-function beautify(x)
-    rr2(size(x)).*sum(abs.(x),dims=3)
-end
 
