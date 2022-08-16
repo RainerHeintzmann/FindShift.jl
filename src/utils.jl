@@ -86,7 +86,7 @@ function separable_view(fct, sz::NTuple{N, Int}, args...) where {N}
     for d = 2:N
         start = -sz[d].÷2 
         idc = start:start+sz[d]-1
-        myaxis = collect(reorient(fct.(idc,arg_n(d, args)...), d))
+        myaxis = collect(reorient(fct.(idc,arg_n(d, args)...), Val(d)))
         # LazyArray representation of expression
         push!(res, myaxis)
     end
