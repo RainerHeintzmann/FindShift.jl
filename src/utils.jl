@@ -66,8 +66,9 @@ end
 # Example:
 ```julia
 julia> pos = (0.1, 0.2); sigma = (0.5, 1.0);
+julia> fct = (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2))
 
-julia> my_gaussian = separable_view( (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2)), (6,5), (0.1,0.2),(0.5,1.0))
+julia> my_gaussian = separable_view(fct, (6,5), (0.1,0.2),(0.5,1.0))
 (6-element Vector{Float64}) .* (1×5 Matrix{Float64}):
  3.99823e-10  2.18861e-9   4.40732e-9   3.26502e-9   8.89822e-10
  1.3138e-5    7.19168e-5   0.000144823  0.000107287  2.92392e-5
@@ -81,16 +82,35 @@ function separable_view(fct, sz::NTuple{N, Int}, args...) where {N}
     first_args = arg_n(1, args)
     start = -sz[1].÷2 
     idc = start:start+sz[1]-1
-    res = []
+    res = Vector{Array{Float64}}()
     push!(res, collect(fct.(idc, first_args...)))
     for d = 2:N
         start = -sz[d].÷2 
         idc = start:start+sz[d]-1
-        myaxis = collect(reorient(fct.(idc,arg_n(d, args)...), Val(d)))
+        # myaxis = collect(fct.(idc,arg_n(d, args)...)) # no need to reorient
+        myaxis = collect(reorient(fct.(idc,arg_n(d, args)...), d, Val(N)))
         # LazyArray representation of expression
         push!(res, myaxis)
     end
+    # if true  # nested generators
+    #     q = res[end]
+    #     for d = N-1:-1:1
+    #         q = (n .* m for n in res[d], m in q)
+    #     end
+    #     return q
+    # else # using cartesion indices and one level of nesting generators
+    #     return (t_arr_prod(res, c) for c in CartesianIndices(sz))
+    # end
     LazyArray(@~ .*(res...)) # multiply them all together
+end
+
+function t_arr_prod(arr::Vector{Vector{T}}, c::CartesianIndex{N})::T where {T,N, TI}
+    res = arr[1][c[1]]
+    for d in 2:N
+        res *= arr[d][c[d]]
+    end
+    return res
+    # prod((arr[d][c[d]] for d in 1:N))
 end
 
 # hf enhancement for better visualization and peak finding

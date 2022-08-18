@@ -7,7 +7,7 @@ homography and non-rigid (patch-based) transforms.
 module FindShift
 using FourierTools, IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore, Statistics
 using FFTW
-using LazyArrays, StaticArrays
+using LazyArrays, StaticArrays #
 using RegisterDeformation, CoordinateTransformations
 using PSFDistiller # currently needed for gaussf
 
