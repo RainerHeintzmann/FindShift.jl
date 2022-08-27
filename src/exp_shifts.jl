@@ -13,7 +13,7 @@ function exp_shift_dat(dat, k_0)
     pvec = 2pi .* k_0 ./ sz;
     # [dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat)]
     # the collect below, makes it faster
-    fct = (p, pvec) -> exp(-1im * pvec * p)
+    fct = (p, pvec) -> cis(-pvec * p)
     sv = separable_view(fct, sz, pvec)
     # @show size(sv)
     LazyArray(@~ dat .* sv)

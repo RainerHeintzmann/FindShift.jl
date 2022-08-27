@@ -74,7 +74,7 @@ function fourier_mellin(img1::AbstractArray{T,N}, img2::AbstractArray{T,N}; radi
     res = replace_nan(warp(img1, ϕ, size(img1)))
     
     # ashift, err, phasediff = phase_offset(res, img2; upsample_factor=100)
-    ashift = find_shift_iter(res, img2) # do not normalize, as this may cause trouble, if the mean is close to zero!
+    ashift = find_shift_iter(img2, res) # do not normalize, as this may cause trouble, if the mean is close to zero!
     # println("Angle: $α , zoom: $zoom, shift: $ashift") 
     # @vt img2 res
     # ashift = Tuple(ashift ./ size(img1))
@@ -84,5 +84,5 @@ function fourier_mellin(img1::AbstractArray{T,N}, img2::AbstractArray{T,N}; radi
     # @vt img2 res register(img2, res; upsample_factor=100) res2 
 
     # return res2,(α, zoom, ashift)
-    return shift(res, .-ashift), (α, zoom, ashift) # shift(res, -ashift)
+    return shift(res, ashift), (α, zoom, ashift) # shift(res, -ashift)
 end

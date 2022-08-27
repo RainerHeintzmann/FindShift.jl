@@ -82,7 +82,7 @@ function separable_view(fct, sz::NTuple{N, Int}, args...) where {N}
     first_args = arg_n(1, args)
     start = -sz[1].÷2 
     idc = start:start+sz[1]-1
-    res = Vector{Array{Float64}}()
+    res = [] # Vector{Array{Float64}}()
     push!(res, collect(fct.(idc, first_args...)))
     for d = 2:N
         start = -sz[d].÷2 

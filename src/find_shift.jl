@@ -40,13 +40,15 @@ end
 
 """
     find_ft_shift_iter(fdat1, fdat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
-    finds the shift between two input images by minimizing the distance.
-    To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
-    Therefore `fdat1` and `fdat2` have to be the FFTs of the data. 
-    Returned is an estimate of the real space (subpixel) shift.
 
-    The first image is interpreted as the ground truth, whereas the second as a measurement
-    described by the distance norm `mynorm`.
+finds the shift between two input images by minimizing the distance.
+To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
+Therefore `fdat1` and `fdat2` have to be the FFTs of the data. 
+Returned is an estimate of the real space (subpixel) shift.
+
+The first image is interpreted as the ground truth, whereas the second as a measurement
+described by the distance norm `mynorm`. 
+returned is the shift vector.
 """
 function find_ft_shift_iter(fdat1::AbstractArray{T,N}, fdat2::AbstractArray{T,N}; max_range=nothing, verbose=false, mynorm=dist_sqr, normalize_variance=true) where {T,N}
     # loss(v) = mynorm(fdat1, v[1].*exp_shift_dat(fdat2,v[2:end])) 
@@ -87,12 +89,14 @@ end
 
 # using View5D
 """
-find_shift_iter(dat1, dat2, Δx=nothing)
+    find_shift_iter(dat1, dat2, Δx=nothing)
+
 finds the integer shift with between two input images via the maximum of the cross-correlation.
 Therefore `dat1` and `dat2` have to the the FFTs of the data. 
 Returned is an estimate of the real space integer pixel shift.
 
 The first image is interpreted as the ground truth, whereas the second as a measurement.
+Returned is the shift vector.
 """
 function find_shift(dat1, dat2)
     mycor = let
@@ -127,13 +131,14 @@ end
 
 """
     find_shift_iter(dat1, dat2, Δx=nothing)
-    finds the shift between two input images by minimizing the distance.
-    To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
-    Therefore `dat1` and `dat2` have to the the FFTs of the data. 
-    Returned is an estimate of the real space (subpixel) shift.
 
-    The first image is interpreted as the ground truth, whereas the second as a measurement
-    described by the distance norm `mynorm`.
+finds the shift between two input images by minimizing the distance.
+To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
+Therefore `dat1` and `dat2` have to the the FFTs of the data. 
+Returned is an estimate of the real space (subpixel) shift.
+
+The first image is interpreted as the ground truth, whereas the second as a measurement
+described by the distance norm `mynorm`.
 
 #Arguments
 + `dat1`:   source dataset for which the shift towards the destination dataset `dat2` is determined
@@ -169,9 +174,10 @@ end
 
 """
     shift_cut(dat1, dat2, Δx)
-    assumes that input image `dat2` is a version of `dat1` but shifted by `Δx` (in the coordinates of dat1).
-    returned are both images shifted to the same coordinate system and cut such that no wrap-around occurs.
-    The result snippet will have the size of dat2 which can be smaller than the size of dat1.
+
+assumes that input image `dat2` is a version of `dat1` but shifted by `Δx` (in the coordinates of dat1).
+returned are both images shifted to the same coordinate system and cut such that no wrap-around occurs.
+The result snippet will have the size of dat2 which can be smaller than the size of dat1.
 """
 function shift_cut(dat1, dat2, Δx)
     sz1 = size(dat1)
@@ -237,7 +243,8 @@ function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true,
 end
 
 """
-find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
+    find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
+
 localizes the peak in Fourier-space with sub-pixel accuracy using an iterative fitting routine.
 
 # Arguments
@@ -281,9 +288,10 @@ end
 
 """
     align_stack(dat; refno=1, ref = nothing, damp=0.1, max_freq=0.4,  dim=ndims(dat), method=:FindZoomFT)
-    aligns a series of images with respect to a reference image `ref`. 
-    If `ref==nothing` this image is extracted from the stack at position `refno`. If `refno==nothing` the central position is used.
-    If `eltype(dat)` is an Integer Type, the data will be casted to `Float32`.
+
+aligns a series of images with respect to a reference image `ref`. 
+If `ref==nothing` this image is extracted from the stack at position `refno`. If `refno==nothing` the central position is used.
+If `eltype(dat)` is an Integer Type, the data will be casted to `Float32`.
 
 # Arguments
 + dat: stack to align slicewise
@@ -390,10 +398,10 @@ end
 """
      prepare_correlation(dat; upsample=true, other=nothing, psf=nothing)
 
-     prepares the correlation by optionally convolving `dat` with the `psf` and upsampling the result by a factor of two.
-     This is needed since the correlation can extend twice as far.
-     `dat` should already be the inverse Fourier transformation of the data to correlate.
-     To correlate the Fourier transforms of real-valued data, just supply the real-space data as `dat`.
+prepares the correlation by optionally convolving `dat` with the `psf` and upsampling the result by a factor of two.
+This is needed since the correlation can extend twice as far.
+`dat` should already be the inverse Fourier transformation of the data to correlate.
+To correlate the Fourier transforms of real-valued data, just supply the real-space data as `dat`.
 """
 function prepare_correlation(dat; upsample=true, other=nothing, psf=nothing)
     up = zeros(size(dat,1)*2,size(dat,2)*2,size(dat,3))
@@ -440,9 +448,9 @@ end
 """
     correlate(dat; upsample=true, other=nothing, phase_only=false, psf=nothing)
 
-     correlates `dat` with a reference `other` or by default with itself.
-     `dat` should already be the inverse Fourier transformation of the array to correlate.
-     To correlate the Fourier transforms of real-valued data, just supply the real-space data as `dat`.
+correlates `dat` with a reference `other` or by default with itself.
+`dat` should already be the inverse Fourier transformation of the array to correlate.
+To correlate the Fourier transforms of real-valued data, just supply the real-space data as `dat`.
 """
 function correlate(dat; upsample=true, other=nothing, phase_only=false, psf=nothing)
     up, other = prepare_correlation(dat; upsample=upsample, other=other, psf=psf)
