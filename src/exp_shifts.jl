@@ -2,9 +2,13 @@
 function exp_shift(sz, k_0)
     # mymid = (sz.÷2).+1
     pvec = k_0 ./ sz;
-    fct = (p, pvec) -> exp((1im*2pi) * pvec * p)
-    separable_view(fct, sz, pvec)
-    # [exp((1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(sz)]
+    fct = (p, sz, pvec) -> cis(2pi * pvec * p)
+    f_sep = calculate_separables(Array{ComplexF32, length(sz)}, fct, sz, pos=pvec)
+    return .*(f_sep...)
+
+    # fct = (p, pvec) -> exp((1im*2pi) * pvec * p)
+    # return separable_view(fct, sz, pvec)
+    # return [exp((1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(sz)]
 end
 
 function exp_shift_dat(dat, k_0)
@@ -13,10 +17,22 @@ function exp_shift_dat(dat, k_0)
     pvec = 2pi .* k_0 ./ sz;
     # [dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat)]
     # the collect below, makes it faster
-    fct = (p, pvec) -> cis(-pvec * p)
-    sv = separable_view(fct, sz, pvec)
-    # @show size(sv)
-    LazyArray(@~ dat .* sv)
+    fct = (p, sz, pvec) -> cis(-pvec * p)
+    f_sep = calculate_separables(Array{eltype(dat), length(sz)}, fct, sz, pvec)
+    return .*(dat, f_sep...)
+    # fct = (p, pvec) -> cis(-pvec * p)
+    # sv = separable_view(fct, sz, pvec)
+    # # @show size(sv)
+    # LazyArray(@~ dat .* sv)
+end
+
+
+function exp_shift_sep(sz, k_0)
+    pvec = k_0 ./ sz;
+    # return separable_view((p, pvec) -> cis(2pi * pvec * p), sz, pvec)
+    fct = (p, sz, pvec) -> cis(2pi * pvec * p)
+    f_sep = calculate_separables(Array{ComplexF32, length(sz)}, fct, sz, pos=pvec)
+    .*(f_sep...)
 end
 
  # define custom adjoint for sum_exp_shift
@@ -48,7 +64,10 @@ function sum_exp_shift(dat, k_0)
     # mymid = (sz.÷2).+1
     pvec = k_0 ./ sz;
     # sum(dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
-    sum(dat .* separable_view((p, pvec) -> exp((-1im*2pi) * pvec * p), sz, pvec))
+    fct = (p, sz, pvec) -> cis(-2pi * pvec * p)
+    f_sep = calculate_separables(Array{ComplexF32, length(sz)}, fct, sz, pos=pvec)
+    return sum(dat .* (f_sep...))
+    # sum(dat .* separable_view((p, pvec) -> exp((-1im*2pi) * pvec * p), sz, pvec))
 end
 
 function sum_exp_shift_ix(dat, k_0)
@@ -58,32 +77,32 @@ function sum_exp_shift_ix(dat, k_0)
     accumulate(.+, dat[p] .* Tuple(p) .* exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
 end
 
-"""
-    sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
-    a helper function for the gradient of a sum over an exponential
-"""
-function sum_res_i_old(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
-    mymid = (size(dat).÷2).+1
-    s1 = sum(conj(dat[p]) * exp(1im * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
-    s1_i = imag.(s1)
-    s1_r = real.(s1)
-    s2 = zeros(ComplexF64, D)
-    x = zeros(Float64, D)
-    res_i = zeros(Float64, D)
-    s2_r = zeros(Float64, D) 
-    s2_i = zeros(Float64, D) 
+# """
+#     sum_res_i_old(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
+#     a helper function for the gradient of a sum over an exponential
+# """
+# function sum_res_i_old(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
+#     mymid = (size(dat).÷2).+1
+#     s1 = sum(conj(dat[p]) * exp(1im * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
+#     s1_i = imag.(s1)
+#     s1_r = real.(s1)
+#     s2 = zeros(ComplexF64, D)
+#     x = zeros(Float64, D)
+#     res_i = zeros(Float64, D)
+#     s2_r = zeros(Float64, D) 
+#     s2_i = zeros(Float64, D) 
 
-    sp = zero(eltype(pvec))
-    for p in  CartesianIndices(dat)
-        x .= Tuple(p) .- mymid
-        sp = dot(pvec, x)
-        s2 .= x .* (dat[p] .* exp.(-1im .* sp))
-        s2_r .= real.(s2)
-        s2_i .= imag.(s2)
-        res_i .+= s1_i.*s2_r .+ s1_r .* s2_i
-    end
-    res_i
-end
+#     sp = zero(eltype(pvec))
+#     for p in  CartesianIndices(dat)
+#         x .= Tuple(p) .- mymid
+#         sp = dot(pvec, x)
+#         s2 .= x .* (dat[p] .* exp.(-1im .* sp))
+#         s2_r .= real.(s2)
+#         s2_i .= imag.(s2)
+#         res_i .+= s1_i.*s2_r .+ s1_r .* s2_i
+#     end
+#     res_i
+# end
 
 
 """

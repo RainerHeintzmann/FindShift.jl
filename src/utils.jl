@@ -17,14 +17,17 @@ end
 function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
     sz = size(dat)
     mymid = (sz.÷2).+1
-    s1 = sum(conj.(dat) .* separable_view((p, pvec) -> exp((1im) * pvec * p), sz, pvec))
-    # s2 = sum_t(apply_tuple_list.(.*, idx(sz), dat .* separable_view((p, pvec) -> exp((-1im) * pvec * p), sz, pvec)))
-    times_pos(p,d) = (p .-mymid) .* d
-    s2 = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), dat .* separable_view((p, pvec) -> exp((-1im) * pvec * p), sz, pvec)))
-    t_imag.(s1 .* s2)
+    f = (p, sz, pvec) -> cis(pvec * p)
+    # s1 = sum(conj.(dat) .* separable_view(f, sz, pvec))
+    f_sep = calculate_separables(Array{T,D}, fct, sz, pos=pvec)
+    s1 = sum(conj.(dat) .* (f_sep...))
 
-    #res =  sum_t(t_imag.(apply_tuple_list.(.*,idx(sz), s1 .* dat .* separable_view((p, pvec) -> exp((-1im * pvec * p)), sz, pvec))))
-    # (Tuple.(CartesianIndices(sz)) .- mymid)
+    times_pos(p,d) = (p .-mymid) .* d
+    g = (p, sz, pvec) -> cis(- pvec * p)
+    # s2 = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), dat .* separable_view(g, sz, pvec)))
+    f_sep2 = calculate_separables(Array{T,D}, g, sz, pos=pvec)
+    s2 = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), dat .* (f_sep2...)))
+    t_imag.(s1 .* s2)
 end
 
 function find_max(dat; exclude_zero=true)
@@ -50,59 +53,51 @@ function arg_n(n,args)
     return (a[n] for a in args)
 end
 
-"""
-    separable_view{N}(fct, sz, args...)
-    creates an array view of an N-dimensional separable function.
-    Note that this view consumes much less memory than a full allocation of the collected result.
-    Note also that an N-dimensional calculation expression may be much slower than this view reprentation of a product of N one-dimensional arrays.
-    See the example below.
+# """
+#     separable_view{N}(fct, sz, args...)
+
+# creates an array view of an N-dimensional separable function.
+# Note that this view consumes much less memory than a full allocation of the collected result.
+# Note also that an N-dimensional calculation expression may be much slower than this view reprentation of a product of N one-dimensional arrays.
+# See the example below.
     
-# Arguments:
-+ fct: The separable function, with a number of arguments corresponding to `length(args)`, each corresponding to a vector of separable inputs of length N.
-        The first argument of this function is a Tuple corresponding the centered indices.
-+ sz: The size of the N-dimensional array to create
-+ args...: a list of arguments, each being an N-dimensional vector
+# # Arguments:
+# + fct: The separable function, with a number of arguments corresponding to `length(args)`, each corresponding to a vector of separable inputs of length N.
+#         The first argument of this function is a Tuple corresponding the centered indices.
+# + sz: The size of the N-dimensional array to create
+# + args...: a list of arguments, each being an N-dimensional vector
 
-# Example:
-```julia
-julia> pos = (0.1, 0.2); sigma = (0.5, 1.0);
-julia> fct = (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2))
+# # Example:
+# ```julia
+# julia> pos = (0.1, 0.2); sigma = (0.5, 1.0);
+# julia> fct = (r, pos, sigma)-> exp(-(r-pos)^2/(2*sigma^2))
 
-julia> my_gaussian = separable_view(fct, (6,5), (0.1,0.2),(0.5,1.0))
-(6-element Vector{Float64}) .* (1×5 Matrix{Float64}):
- 3.99823e-10  2.18861e-9   4.40732e-9   3.26502e-9   8.89822e-10
- 1.3138e-5    7.19168e-5   0.000144823  0.000107287  2.92392e-5
- 0.00790705   0.0432828    0.0871609    0.0645703    0.0175975
- 0.0871609    0.477114     0.960789     0.71177      0.19398
- 0.0175975    0.0963276    0.19398      0.143704     0.0391639
- 6.50731e-5   0.000356206  0.000717312  0.000531398  0.000144823
-```
-"""
-function separable_view(fct, sz::NTuple{N, Int}, args...) where {N}
-    first_args = arg_n(1, args)
-    start = -sz[1].÷2 
-    idc = start:start+sz[1]-1
-    res = [] # Vector{Array{Float64}}()
-    push!(res, collect(fct.(idc, first_args...)))
-    for d = 2:N
-        start = -sz[d].÷2 
-        idc = start:start+sz[d]-1
-        # myaxis = collect(fct.(idc,arg_n(d, args)...)) # no need to reorient
-        myaxis = collect(reorient(fct.(idc,arg_n(d, args)...), d, Val(N)))
-        # LazyArray representation of expression
-        push!(res, myaxis)
-    end
-    # if true  # nested generators
-    #     q = res[end]
-    #     for d = N-1:-1:1
-    #         q = (n .* m for n in res[d], m in q)
-    #     end
-    #     return q
-    # else # using cartesion indices and one level of nesting generators
-    #     return (t_arr_prod(res, c) for c in CartesianIndices(sz))
-    # end
-    LazyArray(@~ .*(res...)) # multiply them all together
-end
+# julia> my_gaussian = separable_view(fct, (6,5), (0.1,0.2),(0.5,1.0))
+# (6-element Vector{Float64}) .* (1×5 Matrix{Float64}):
+#  3.99823e-10  2.18861e-9   4.40732e-9   3.26502e-9   8.89822e-10
+#  1.3138e-5    7.19168e-5   0.000144823  0.000107287  2.92392e-5
+#  0.00790705   0.0432828    0.0871609    0.0645703    0.0175975
+#  0.0871609    0.477114     0.960789     0.71177      0.19398
+#  0.0175975    0.0963276    0.19398      0.143704     0.0391639
+#  6.50731e-5   0.000356206  0.000717312  0.000531398  0.000144823
+# ```
+# """
+# function separable_view(fct, sz::NTuple{N, Int}, args...) where {N}
+#     first_args = arg_n(1, args)
+#     start = -sz[1].÷2 
+#     idc = start:start+sz[1]-1
+#     res = [] # Vector{Array{Float64}}()
+#     push!(res, collect(fct.(idc, first_args...)))
+#     for d = 2:N
+#         start = -sz[d].÷2 
+#         idc = start:start+sz[d]-1
+#         # myaxis = collect(fct.(idc,arg_n(d, args)...)) # no need to reorient
+#         myaxis = collect(reorient(fct.(idc,arg_n(d, args)...), d, Val(N)))
+#         # LazyArray representation of expression
+#         push!(res, myaxis)
+#     end
+#     LazyArray(@~ .*(res...)) # multiply them all together
+# end
 
 function t_arr_prod(arr::Vector{Vector{T}}, c::CartesianIndex{N})::T where {T,N, TI}
     res = arr[1][c[1]]

@@ -32,12 +32,6 @@ function dist_anscombe(dat1, dat2)
     sum(abs2.(sqrt.(dat1) .- sqrt.(dat2)))
 end
 
-
-function exp_shift_sep(sz, k_0)
-    pvec = k_0 ./ sz;
-    separable_view((p, pvec) -> exp((1im*2pi) * pvec * p), sz, pvec)
-end
-
 """
     find_ft_shift_iter(fdat1, fdat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
 
