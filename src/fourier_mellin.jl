@@ -84,5 +84,5 @@ function fourier_mellin(img1::AbstractArray{T,N}, img2::AbstractArray{T,N}; radi
     # @vt img2 res register(img2, res; upsample_factor=100) res2 
 
     # return res2,(α, zoom, ashift)
-    return shift(res, ashift), (α, zoom, ashift) # shift(res, -ashift)
+    return shift(res, ashift), (α, zoom, .-ashift) # shift(res, -ashift)
 end

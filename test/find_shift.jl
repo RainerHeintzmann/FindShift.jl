@@ -1,5 +1,5 @@
 @testset "Testset find_shift_iter" begin
-    sz = (100,100)
+    sz = (100,103)
     img1 = rand(Float32, sz...);
     myshift = (10.2,22.3)
     img2 = shift(img1, myshift);

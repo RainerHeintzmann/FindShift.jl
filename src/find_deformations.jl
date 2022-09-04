@@ -56,6 +56,8 @@ function find_deformations(fixed, movings, grid_size=(11, 11); average_pos=false
                     myshifts[:,ci...] .= .- myshift
                 else # account for the rigid pre-transform 
                     marker = markers[n]
+                    #@show myshift
+                    #@show (w(marker) .- marker) .- myshift
                     myshifts[:,ci...] .= (w(marker) .- marker) .- myshift
                 end
                 n = n + 1
@@ -139,6 +141,7 @@ function align_images(img_list; average_pos=true, extra_shift=(0.25, 0.25), band
     reference = filtered[1]
     movings = filtered[2:end]
     rigidly_aligned, params = fourier_mellin_align(reference, movings)
+    # return rigidly_aligned, params
 
     warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:4], grid_size, average_pos=average_pos, extra_shift =extra_shift, patch_size=patch_size, pre_transform_params=params[2:end], avoid_border=avoid_border, tolerance=tolerance, warn_norm=warn_norm)
     all_aligned = [replace_nan(warp(img_list[n], warps[n])) for n=1:length(img_list)]
