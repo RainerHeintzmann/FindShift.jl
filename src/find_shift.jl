@@ -152,7 +152,7 @@ function find_shift_iter(dat1::AbstractArray{T,N}, dat2::AbstractArray{T,N}, Δx
 
     dat1c, dat2c = shift_cut(dat1, dat2, .-Δx)
     # return dat1, dat2, mycor, Δx
-    win = window_hanning(T, size(dat1c), border_in=0.0)
+    win = window_hanning(Float32, size(dat1c), border_in=0.0)
 
     # @show any(isnan.(win .* dat1c))
     # @show any(isnan.(win .* dat2c))
@@ -185,7 +185,7 @@ end
 
 function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false) where{T,N}
     RT = real(T)
-    win = collect(window_hanning(RT, size(dat), border_in=0.0))
+    win = collect(window_hanning(Float32, size(dat), border_in=0.0))
     wdat = win .* dat 
 
     k_est = let
@@ -327,8 +327,9 @@ function align_stack(dat::AbstractArray{T,N}; refno=nothing, ref = nothing, damp
 		end
 	end
 	# damp_edge_outside(ref, damp)
-	wh = window_hanning(RT, size(ref), border_in=0.0, border_out=1.0-damp)
-	fwin = window_radial_hanning(RT, size(ref), 		 
+    # do not use RT below, since then these algorithms do not work with Int as input type
+	wh = window_hanning(Float32, size(ref), border_in=0.0, border_out=1.0-damp)
+	fwin = window_radial_hanning(Float32, size(ref), 		 
   		border_in=max_freq*0.8,border_out=max_freq*1.2)
 		# rr(size(ref)) .< maxfreq .* size(ref)[1]
 	imgs = []
@@ -467,7 +468,7 @@ function get_subpixel_patch(cor::AbstractArray{T,N}, p_est; scale=10, roi_size=4
     new_size = min.(roi_size .* scale, size(cor))
     roi = select_region(cor,center=p_mid.+p_est,new_size=new_size)  # (iczt(fc .* exp_ikx(size(cor)[1:2], shift_by=.-p_est), scale)
     # return roi
-    fc = ft2d(roi .* window_hanning(RT, size(roi), border_in=0.0))
+    fc = ft2d(roi .* window_hanning(Float32, size(roi), border_in=0.0))
     # fc = ft2d(roi)
     scale = scale .* ones(RT, ndims(cor))
     roi = iczt(fc, scale, (1,2))

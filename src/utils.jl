@@ -19,15 +19,15 @@ function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
     mymid = (sz.÷2).+1
     f = (p, sz, pvec) -> cis(pvec * p)
     # s1 = sum(conj.(dat) .* separable_view(f, sz, pvec))
-    f_sep = calculate_separables(Array{T,D}, fct, sz, pos=pvec)
+    f_sep = calculate_separables(Array{T,D}, f, sz, pvec)
     s1 = sum(conj.(dat) .* (f_sep...))
 
     times_pos(p,d) = (p .-mymid) .* d
     g = (p, sz, pvec) -> cis(- pvec * p)
     # s2 = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), dat .* separable_view(g, sz, pvec)))
-    f_sep2 = calculate_separables(Array{T,D}, g, sz, pos=pvec)
+    f_sep2 = calculate_separables(Array{T,D}, g, sz, pvec)
     s2 = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), dat .* (f_sep2...)))
-    t_imag.(s1 .* s2)
+    imag.(s1 .* s2)  # t_imag
 end
 
 function find_max(dat; exclude_zero=true)

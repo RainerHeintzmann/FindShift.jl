@@ -65,7 +65,7 @@ function sum_exp_shift(dat, k_0)
     pvec = k_0 ./ sz;
     # sum(dat[p] * exp((-1im*2pi) * dot(pvec,Tuple(p) .- mymid)) for p in CartesianIndices(dat))
     fct = (p, sz, pvec) -> cis(-2pi * pvec * p)
-    f_sep = calculate_separables(Array{ComplexF32, length(sz)}, fct, sz, pos=pvec)
+    f_sep = calculate_separables(Array{ComplexF32, length(sz)}, fct, sz, pvec)
     return sum(.*(dat, f_sep...))
     # sum(dat .* separable_view((p, pvec) -> exp((-1im*2pi) * pvec * p), sz, pvec))
 end
