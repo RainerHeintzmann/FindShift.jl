@@ -36,6 +36,7 @@ function find_deformations(fixed, movings, grid_size=(11, 11); average_pos=false
             end
         end
         n = 1
+        # iterate through the patches
         for ci in CartesianIndices(grid_size)
             ci = Tuple(ci)
             # measures the difference compared to the middle of each patch, since it expands to the larger size.
@@ -120,6 +121,7 @@ Returned ia a tuple of the aligned images and a vector of warps to perform the t
 
 
 #Arguments
++ `img_list`: a vector of (2D-) images to align. the first is the reference image.
 + `average_pos`:   if true, all images (including the first one) will be aligned to the average deformation (not accounting for the rigid pre-alignment)
 + `extra_shift``:   an extra shift to apply to all images (including the first one). The default (0.25,0.25) aims to generate a little bit of interpolation, to make all aligned images more comparable in quality.
 + `band_pass_freq`:  the relative center frequency of the band pass (compared to the Nyquist/border frequency)
