@@ -1,8 +1,9 @@
 
 """
-    compute_homography(markers1, markers2)
+    compute_homography(markers1, markers2; extra_constraint=false)
     computes the homography matrix H which means
     H [markers1[n]...,1] = [markers2[n]...,1] etc
+    extra_constraint=true enforces the result vector to be normalized
 """
 function compute_homography(markers_from, markers_to; extra_constraint=false)
     # matrix containing the coefficient to look for:
@@ -31,10 +32,16 @@ function compute_homography(markers_from, markers_to; extra_constraint=false)
     # ns = A\b
     # return SMatrix{3,3}(reshape(ns, (3, 3))') # the normalization needs to be taken care of 
   
+    rtol = 1e-9;
     if extra_constraint
-        ns = nullspace(A, rtol=1e-9)
+        ns = nullspace(A, rtol=rtol)
     else
         ns = nullspace(A)
+    end
+    if isempty(ns)
+        print("extra_constraint=$(extra_constraint)\n")
+        print("rtol=$(rtol)\n")
+        error("Found empty nullspace in homography transform.")
     end
     return SMatrix{3,3}(reshape(ns, (3, 3))') / ns[end] # the normalization needs to be taken care of 
     # return SMatrix{3,3}(reshape(ns ./ ns[end], (3, 3))')  # bad results
@@ -67,17 +74,17 @@ end
     The result is a function the can be applied to an `SVector` and thus
     be directly used in `warp(image, ϕ, axes(image))` to warp the `image`.
 """
-function get_homography_warp(markers_from, markers_to, rot_mat=nothing)
+function get_homography_warp(markers_from, markers_to, rot_mat=nothing; extra_constraint=false)
     if !isnothing(rot_mat)
         # irot = inv(rot_mat)
         markers_to_2 = [(rot_mat*[m...,1.0])[1:2] for m in markers_to]
-        H = compute_homography(markers_from, markers_to_2) 
+        H = compute_homography(markers_from, markers_to_2; extra_constraint=extra_constraint) 
         w2 = get_warp(H)
         return w2
         # w1 = get_warp(SMatrix{3,3}(rot_mat))
         # return x -> w2(w1(x))
     else
-        H = compute_homography(markers_from, markers_to) 
+        H = compute_homography(markers_from, markers_to; extra_constraint=extra_constraint) 
         w2 = get_warp(H)
         return w2
     end
@@ -101,8 +108,8 @@ Their locations are then (hopefully) retrieved in the `moving` images.
     markers = [[100,100],[1000,100],[1000,1000,],[100,1000]]
     w1,w2,w3 = determine_homography_warp(fixed, [moving1, moving2, moving3], markers)
 """
-function determine_homography_warps(fixed, movings, markers=nothing; patches=nothing, max_shift = 300.0, patch_size=max.(size(fixed) .÷ 5,5), pre_rotate_angles=nothing)
-    q, markers = extract_patches(fixed, markers, patch_size)
+function determine_homography_warps(fixed, movings, markers=nothing; patches=nothing, max_shift = 300.0, patch_size=max.(size(fixed) .÷ 5,5), pre_rotate_angles=nothing, extra_constraint=true)
+    q, markers = extract_patches(fixed, markers; patch_size=patch_size)
     ws = []
     num = 1
     if !isnothing(patches)
@@ -132,7 +139,7 @@ function determine_homography_warps(fixed, movings, markers=nothing; patches=not
             end
             pos += 1
         end
-        push!(ws, get_homography_warp(markers, located_pos, rot_mat))
+        push!(ws, get_homography_warp(markers, located_pos, rot_mat; extra_constraint=extra_constraint))
         num += 1
     end
     return ws
