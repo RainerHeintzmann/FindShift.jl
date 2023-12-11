@@ -83,44 +83,79 @@ end
 
 # using View5D
 """
-    find_shift_iter(dat1, dat2, Δx=nothing)
+    find_shift(dat1, dat2; zoom=nothing)
 
 finds the integer shift with between two input images via the maximum of the cross-correlation.
 Therefore `dat1` and `dat2` have to the the FFTs of the data. 
 Returned is an estimate of the real space integer pixel shift.
 
+If the `zoom` argument (a number of a Tuple) is provided, in a second step, the inverse FFT is replaced by a chirp Z transformation
+with the given zoom factor. This yields a result, which is by this factor more precise. A typical zoom factor
+is for example 200, but it should not be bigger than the image size.
+Note that for `zoom` being not nothing, the algorithm will also trim both arrays to their mutual overlap and apply a Hanning window over the whole field.
+
 The first image is interpreted as the ground truth, whereas the second as a measurement.
 Returned is the shift vector.
+
+# Example:
+julia> img = rand(512,512);
+julia> simg = shift(img, (3.3, 4.45));
+julia> find_shift(simg, img)
+(3, 4)
+julia> find_shift(simg, img, zoom=100.0)
+(3.3, 4.45)
+julia> find_shift_iter(simg, img)
+2-element Vector{Float64}:
+ 3.298879717301924
+ 4.449585689185147
 """
-function find_shift(dat1, dat2)
-    mycor = let
-        if all((size(dat2).-size(dat1)) .== 0)
-            if eltype(dat1)<:Real && eltype(dat2)<:Real
-                fftshift(irfft(rfft(dat1) .* conj(rfft(dat2)), size(dat1)[1]))
-            else
-                fftshift(ifft(fft(dat1) .* conj(fft(dat2))))
+function find_shift(dat1, dat2, Δx=nothing; zoom=nothing)
+    if isnothing(Δx)
+        fmul = let
+            if all((size(dat2).-size(dat1)) .== 0)
+                if eltype(dat1)<:Real && eltype(dat2)<:Real
+                    rfft(dat1) .* conj(rfft(dat2))
+                else
+                    fft(dat1) .* conj(fft(dat2))
+                end
+            else # normalize the correlation appropriately to identify the snippet
+                dat2_big = select_region(dat2, new_size=size(dat1))
+                # ref = select_region(ones(eltype(dat1), size(dat2)), new_size=size(dat1))
+                if eltype(dat1)<:Real && eltype(dat2)<:Real
+                    rft1 = rfft(dat1)
+                    rft1 .* conj(rfft(dat2_big))
+                    # cor2 = fftshift(irfft(rft1 .* conj(rfft(ref)), size(dat1)[1]))
+                    # res = cor1 ./ (abs.(cor2) .+ maximum(cor1) ./ 100)
+                    # @vt cor1 res
+                else
+                    rft1 = fft(dat1)
+                    rft1 .* conj(fft(dat2_big))
+                end
             end
-        else # normalize the correlation appropriately to identify the snippet
-            dat2_big = select_region(dat2, new_size=size(dat1))
-            # ref = select_region(ones(eltype(dat1), size(dat2)), new_size=size(dat1))
+        end
+        Δx = let
             if eltype(dat1)<:Real && eltype(dat2)<:Real
-                rft1 = rfft(dat1)
-                cor1 = fftshift(irfft(rft1 .* conj(rfft(dat2_big)), size(dat1)[1]))
-                # cor2 = fftshift(irfft(rft1 .* conj(rfft(ref)), size(dat1)[1]))
-                # res = cor1 ./ (abs.(cor2) .+ maximum(cor1) ./ 100)
-                # @vt cor1 res
+                mycor = fftshift(irfft(fmul, size(dat1)[1]))
+                find_max(mycor, exclude_zero=false)
             else
-                rft1 = fft(dat1)
-                cor1 = fftshift(ifft(rft1 .* conj(fft(dat2_big))))
+                mycor = fftshift(ifft(fmul))
+                find_max(abs2.(mycor), exclude_zero=false)
             end
-            cor1
         end
     end
-    if eltype(dat1)<:Real && eltype(dat2)<:Real
-        return find_max(mycor, exclude_zero=false)
-    else
-        return find_max(abs2.(mycor), exclude_zero=false)
+    if !isnothing(zoom)
+        if length(zoom) == 1
+            zoom = ntuple(i -> zoom, Val(ndims(dat1)))
+        end
+        dat1c, dat2c = shift_cut(dat1, dat2, .- Δx)
+        win = window_hanning(Float32, size(dat1c), border_in=0.0)
+        fmul2 = ft(win .* dat1c) .* conj(ft(win .* dat2c))
+        # this is quite slow. Would be nice to use a real-valued CZT where appropriate
+        mycor = iczt(fmul2, zoom)
+        pos2 = find_max(abs2.(mycor), exclude_zero=false)
+        return Δx .+ pos2 ./zoom
     end
+    return Δx
 end
 
 """
@@ -128,7 +163,6 @@ end
 
 finds the shift between two input images by minimizing the distance.
 To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
-Therefore `dat1` and `dat2` have to the the FFTs of the data. 
 Returned is an estimate of the real space (subpixel) shift.
 
 The first image is interpreted as the ground truth, whereas the second as a measurement
@@ -143,7 +177,7 @@ function find_shift_iter(dat1::AbstractArray{T,N}, dat2::AbstractArray{T,N}, Δx
     # mycor = irft(rft(dat1) .* conj(rft(dat2)), size(dat1)[1])
     Δx = let
         if isnothing(Δx)
-            find_shift(dat1, dat2)
+            find_shift(dat1, dat2) # to get a first estimate of the integer shift
         else
             Δx
         end
