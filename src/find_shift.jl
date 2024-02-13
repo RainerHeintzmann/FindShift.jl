@@ -83,11 +83,11 @@ end
 
 # using View5D
 """
-    find_shift(dat1, dat2; zoom=nothing)
+    find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=nothing, est_pos=nothing, est_std=10.0, lambda=0.05)
 
 finds the integer shift with between two input images via the maximum of the cross-correlation.
-Therefore `dat1` and `dat2` have to the the FFTs of the data. 
-Returned is an estimate of the real space integer pixel shift.
+
+Returned is an estimate of the real space (normally integer) pixel shift.
 
 If the `zoom` argument (a number of a Tuple) is provided, in a second step, the inverse FFT is replaced by a chirp Z transformation
 with the given zoom factor. This yields a result, which is by this factor more precise. A typical zoom factor
@@ -97,51 +97,63 @@ Note that for `zoom` being not nothing, the algorithm will also trim both arrays
 The first image is interpreted as the ground truth, whereas the second as a measurement.
 Returned is the shift vector.
 
+The optional argument Δx specifies a known integer shift, which then is used with the "zoom" argument to provide
+-  a better sub-pixel estimate.
+
+# Arguments
+- `dat1`: first image
+- `dat2`: second image
+- `Δx`: known shift to find a more precise sub-pixel estimate for
+- `zoom`: zoom factor for the sub-pixel estimate (if wanted)
+- `mask1`: mask for dat1 to appyl when finding the shift
+- `mask2`: mask for dat2 to appyl when finding the shift
+- `est_pos`:  if provided, a Gaussian preference mask will be applied to bias towards a shift as defined by Δx
+- `est_std`:  the standard deviation of the Gaussian preference mask (only used if `est_pos` was defined)
+- `lambda`: a regularisation factor for the masked cross-correlation. It can be interpreted as approximately the minimum ratio of accepted overlap mask pixels.
+
 # Example:
 julia> img = rand(512,512);
+
 julia> simg = shift(img, (3.3, 4.45));
+
 julia> find_shift(simg, img)
 (3, 4)
+
 julia> find_shift(simg, img, zoom=100.0)
 (3.3, 4.45)
+
 julia> find_shift_iter(simg, img)
 2-element Vector{Float64}:
  3.298879717301924
  4.449585689185147
 """
-function find_shift(dat1, dat2, Δx=nothing; zoom=nothing)
+function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=nothing, est_pos=nothing, est_std=10.0, lambda=0.05, exclude_zero=false)
     if isnothing(Δx)
-        fmul = let
-            if all((size(dat2).-size(dat1)) .== 0)
-                if eltype(dat1)<:Real && eltype(dat2)<:Real
-                    rfft(dat1) .* conj(rfft(dat2))
+        mycor = let
+            if (!isnothing(mask1) || !isnothing(mask2))
+                if (isnothing(mask1))
+                    mask1 = ones(eltype(dat1), size(dat1));
                 else
-                    fft(dat1) .* conj(fft(dat2))
+                    dat1 = inpaint(dat1, mask1);  # no need to inpaint mask1 
                 end
-            else # normalize the correlation appropriately to identify the snippet
-                dat2_big = select_region(dat2, new_size=size(dat1))
-                # ref = select_region(ones(eltype(dat1), size(dat2)), new_size=size(dat1))
-                if eltype(dat1)<:Real && eltype(dat2)<:Real
-                    rft1 = rfft(dat1)
-                    rft1 .* conj(rfft(dat2_big))
-                    # cor2 = fftshift(irfft(rft1 .* conj(rfft(ref)), size(dat1)[1]))
-                    # res = cor1 ./ (abs.(cor2) .+ maximum(cor1) ./ 100)
-                    # @vt cor1 res
+                if (isnothing(mask2))
+                    mask2 = ones(eltype(dat2), size(dat2));
                 else
-                    rft1 = fft(dat1)
-                    rft1 .* conj(fft(dat2_big))
+                    dat2 = inpaint(dat2, mask2);   # no need to inpaint mask2 
                 end
-            end
-        end
-        Δx = let
-            if eltype(dat1)<:Real && eltype(dat2)<:Real
-                mycor = fftshift(irfft(fmul, size(dat1)[1]))
-                find_max(mycor, exclude_zero=false)
+                cor_dat = get_correlation(dat1.*mask1, dat2.*mask2)
+                cor_mask = get_correlation(mask1, mask2)
+                abs2cormask = abs2.(cor_mask)
+                cor_dat.*cor_mask./(abs2cormask .+ lambda*maximum(abs2cormask)) # a Tichonov-type mask to avoid division by zero
             else
-                mycor = fftshift(ifft(fmul))
-                find_max(abs2.(mycor), exclude_zero=false)
+                get_correlation(dat1, dat2)
             end
         end
+        if (!isnothing(est_pos))
+            preference_mask = gaussian_col(typeof(mycor), size(mycor); sigma=est_std, pos=est_pos)
+            mycor .*= preference_mask;
+        end
+        Δx = find_max(mycor, exclude_zero=exclude_zero)
     end
     if !isnothing(zoom)
         if length(zoom) == 1
@@ -151,12 +163,56 @@ function find_shift(dat1, dat2, Δx=nothing; zoom=nothing)
         win = window_hanning(Float32, size(dat1c), border_in=0.0)
         fmul2 = ft(win .* dat1c) .* conj(ft(win .* dat2c))
         # this is quite slow. Would be nice to use a real-valued CZT where appropriate
-        mycor = iczt(fmul2, zoom)
+        red_size = ceil.(Int, 2 .*zoom); # +- 0.5 pixel are allowed.
+        mycor = iczt(fmul2, zoom, 1:ndims(fmul2), red_size)
         pos2 = find_max(abs2.(mycor), exclude_zero=false)
         return Δx .+ pos2 ./zoom
     end
     return Δx
 end
+
+"""
+    get_correlation(dat1, dat2)
+
+returns the real-valued correlation of dat1 with dat2, possibly expanding dat2 in size.
+"""
+function get_correlation(dat1, dat2)
+    # calculate the forward part of the cross-correlation, up to the multiplication:
+    fmul = let
+        if all((size(dat2).-size(dat1)) .== 0)
+            if eltype(dat1)<:Real && eltype(dat2)<:Real
+                rfft(dat1) .* conj(rfft(dat2))
+            else
+                fft(dat1) .* conj(fft(dat2))
+            end
+        else 
+            # make both images equal size
+            dat2_big = select_region(dat2, new_size=size(dat1))
+            # ref = select_region(ones(eltype(dat1), size(dat2)), new_size=size(dat1))
+            if eltype(dat1)<:Real && eltype(dat2)<:Real
+                rft1 = rfft(dat1)
+                rft1 .* conj(rfft(dat2_big))
+                # cor2 = fftshift(irfft(rft1 .* conj(rfft(ref)), size(dat1)[1]))
+                # res = cor1 ./ (abs.(cor2) .+ maximum(cor1) ./ 100)
+                # @vt cor1 res
+            else
+                rft1 = fft(dat1)
+                rft1 .* conj(fft(dat2_big))
+            end
+        end
+    end
+    # find the maximum in the cross-correlation:
+    mycor = let
+        if eltype(dat1)<:Real && eltype(dat2)<:Real
+            fftshift(irfft(fmul, size(dat1)[1]))
+        else
+            mycor = fftshift(ifft(fmul))
+            abs2.(mycor)
+        end
+    end    
+    return mycor
+end
+
 
 """
     find_shift_iter(dat1, dat2, Δx=nothing)

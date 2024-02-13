@@ -5,12 +5,14 @@ contains tools to quickly find the shift between images (pixel and sub-pixel pre
 homography and non-rigid (patch-based) transforms.
 """
 module FindShift
-using FourierTools, IndexFunArrays, NDTools, Optim, Zygote, LinearAlgebra, ChainRulesCore, Statistics
+using FourierTools, IndexFunArrays, NDTools, LinearAlgebra, ChainRulesCore, Statistics
+using Optim, Zygote # for iterative optimization of positions
 using FFTW
-using StaticArrays # LazyArrays, 
+using StaticArrays # for fast arrays
 using RegisterDeformation, CoordinateTransformations
-using PSFDistiller # currently needed for gaussf
+# using PSFDistiller # currently needed for gaussf
 using SeparableFunctions
+using ImageMorphology # for distance-transform based weighting and erosion of masks
 
 export abs2_ft_peak, sum_exp_shift, find_ft_peak, correlate, beautify, get_subpixel_peak, align_stack, optim_correl
 export find_shift, find_shift_iter, shift_cut, separable_view, arg_n
@@ -18,6 +20,9 @@ export determine_homography_warps, locate_patches, extract_patches, get_default_
 export fourier_mellin, fourier_mellin_align
 export find_deformations, align_images
 export extract_sub_images, replace_nan
+export inpaint # see also the code in FourierTools for the version without mask
+export find_pos, stitch
+export find_rel_pos, inpaint_imgs, minimize_distances, limit_strain!, get_strain
 
 include("utils.jl")
 include("exp_shifts.jl")
@@ -27,5 +32,6 @@ include("find_shift.jl")
 include("find_deformations.jl")
 include("homography_warp.jl")
 include("extract_sub_images.jl")
+include("stitching.jl")
 
 end # module

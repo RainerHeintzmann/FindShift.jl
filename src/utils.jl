@@ -99,7 +99,7 @@ end
 #     LazyArray(@~ .*(res...)) # multiply them all together
 # end
 
-function t_arr_prod(arr::Vector{Vector{T}}, c::CartesianIndex{N})::T where {T,N, TI}
+function t_arr_prod(arr::Vector{Vector{T}}, c::CartesianIndex{N})::T where {T,N}
     res = arr[1][c[1]]
     for d in 2:N
         res *= arr[d][c[d]]
@@ -171,5 +171,28 @@ function extract_patches(img, markers=nothing; grid_size=(5,5), patch_size=max.(
 end
 
 function band_pass(img, s, e) 
-    gaussf(img,s) .- gaussf(img,e)
+    # gaussf(img,s) .- gaussf(img,e)
+    filter_gaussian(img, s) .- filter_gaussian(img, e)
 end
+
+"""
+    get_lin_idx(mat, ind3d, dist)
+
+returns the linear index of an n-dimensional index `indnd` in referenc to a matrix (`mat`).
+Note that the nd-index has a position as the last index which is just carried over, whereas
+the other coordinates are modified by the distance `dist`.
+If the index does not exit, zero is returned as linear index.
+"""
+function get_lin_idx(mat, indnd, dist)
+    ind2d = Tuple(indnd)[1:end-1] .+ dist
+    inrange = all(ind2d.>0 .&& ind2d.<=size(mat)[1:end-1])
+    ind1d = let 
+        if (inrange)
+            LinearIndices(mat)[ind2d..., indnd[end]];
+        else
+            0
+        end
+    end
+    return ind1d
+end
+
