@@ -63,13 +63,17 @@ function inpaint(img::AbstractArray{T, N}, mask::AbstractArray{TM, N}; border=0.
     # ToDo: make it work in ND 
 end
 
+function is_mask_array(masks)
+    return !isnothing(masks) && (eltype(masks) == Any || isa(eltype(masks), Array))
+end
+
 function inpaint_imgs(imgs, masks)
     if (isnothing(masks))
         return imgs
     end
     inpainted = [];
     for ind in CartesianIndices(imgs)
-        if eltype(masks) == Any || isa(eltype(masks), Array)
+        if (is_mask_array(masks))
             push!(inpainted, inpaint(imgs[ind], masks[ind]))
         else
             push!(inpainted, inpaint(imgs[ind],masks))
@@ -133,7 +137,7 @@ end
 
 
 """
-    minimize_distances(shift_right_matrix, shift_down_matrix)
+    minimize_distances(shift_matrices, current_dim)
 
 finds the best positions to accomodate the measured data of relative shifts between images.
 To this aim a system of equations is contructed linking all measured information into a global
@@ -141,57 +145,41 @@ minimization problem, which can be solved directly via linear algebra.
 M x = C, with C being constants obtained from the measurement and the matrix M indicating which
 of the neighboring elements of the 2D measurement are connected via the equations.
 The first index of x will be forced to zero.
+
+Note that this problem is separable in the dimensions, which is why it should be called for every dimension `current_dim` independently
 """
-function minimize_distances(shift_down_matrix, shift_right_matrix)
+function minimize_distances(shift_matrices, current_dim)
     # shift_right_matrix = permutedims(shift_right_matrix)
     # shift_down_matrix = permutedims(shift_down_matrix)
-    sz2d = max.(size(shift_right_matrix), size(shift_down_matrix))
-    pos = zeros(sz2d...,2) # allocated as 3d object but used as 1d object in the linear equation system. Last dimension: x and y
-    C = zeros(sz2d...,2);  # allocated as 3D object but used as 1d object in the linear equation system. Last dimension: x and y
-    sz3d = size(pos)
-    lsz = prod(sz3d)
+    sz2d = max.(size.(shift_matrices)...)
+    pos = zeros(sz2d...) # allocated as 3d object but used as 1d object in the linear equation system. Last dimension: x and y
+    C = zeros(sz2d...);  # allocated as 3D object but used as 1d object in the linear equation system. Last dimension: x and y
+    # sz3d = size(pos)
+    lsz = prod(sz2d)
     M = zeros((lsz, lsz)); # allocated and used as 2d matrix
+    nd = length(shift_matrices)
     # for ind3d in CartesianIndices(sz3d)
     for indxy in CartesianIndices(sz2d)
-        ind2d = (indxy[1], indxy[2])
-        for ind_vec in 1:sz3d[end] # iterate over vector components
-            ind3d = (Tuple(indxy)..., ind_vec);
-            ind1d = LinearIndices(pos)[ind3d...]
-            ind1d_down = get_lin_idx(pos, ind3d, (1, 0))
-            ind1d_up = get_lin_idx(pos, ind3d, (-1, 0))
+        for current_diff_dim in 1:nd # iterate over the various topological difference-directions characterised by the shift_matrices 
+            # ind3d = (Tuple(indxy)..., ind_vec);
+            ind1d = LinearIndices(pos)[indxy]
+            direction_idx = direction_tuple(current_diff_dim, nd)
+            ind1d_down = get_lin_idx(pos, indxy, direction_idx)
             if (ind1d_down>0)
-                down_dist = shift_down_matrix[ind2d...];
-                if !isnan(down_dist[ind_vec])
+                down_dist = shift_matrices[current_diff_dim][indxy];
+                if !isnan(down_dist[current_dim])
                     M[ind1d, ind1d] += 1
                     M[ind1d_down, ind1d] += -1
-                    C[ind3d...] += -down_dist[ind_vec];
+                    C[indxy] += -down_dist[current_dim];
                 end
             end
+            ind1d_up = get_lin_idx(pos, indxy, .-direction_idx)
             if (ind1d_up>0)
-                up_dist = shift_down_matrix[ind2d[1]-1, ind2d[2]];
-                if !isnan(up_dist[ind_vec])
+                up_dist = shift_matrices[current_diff_dim][(Tuple(indxy) .- direction_idx)...];
+                if !isnan(up_dist[current_dim])
                     M[ind1d, ind1d] += 1
                     M[ind1d_up, ind1d] += -1
-                    C[ind3d...] += up_dist[ind_vec];
-                end
-            end
-            ind1d_right = get_lin_idx(pos, ind3d, (0, 1))
-            ind1d_left = get_lin_idx(pos, ind3d, (0, -1))
-            if (ind1d_right>0)
-                right_dist = shift_right_matrix[ind2d...];
-                if !isnan(right_dist[ind_vec])
-                    M[ind1d, ind1d] += 1
-                    M[ind1d_right, ind1d] += -1
-                    C[ind3d...] += -right_dist[ind_vec];
-                end
-                # print("$(ind3d) right dist $(right_dist) result $(C[ind3d...])\n")
-            end
-            if (ind1d_left>0)
-                left_dist = shift_right_matrix[ind2d[1], ind2d[2]-1];
-                if !isnan(left_dist[ind_vec])
-                    M[ind1d, ind1d] += 1
-                    M[ind1d_left, ind1d] += -1
-                    C[ind3d...] += left_dist[ind_vec];
+                    C[indxy] += up_dist[current_dim];
                 end
             end
         end
@@ -201,16 +189,26 @@ function minimize_distances(shift_down_matrix, shift_right_matrix)
     # M[1, lsz÷2+1] = 1; C[lsz÷2+1] = 0; # forcing the y-position of the first solution to zero
     # return nothing, M,C;
     U,D,Vt = svd(M)
-    nd = ndims(shift_down_matrix)
     if (D[end-nd-1]/D[1] < 1e-5)
         error("Matrix Singular")
     end
     Dinv = D
-    Dinv[1:end-2] = 1 ./D[1:end-nd];
+    Dinv[1:end-1] = 1 ./D[1:end-1];  # there should be exactly one underdetermined direction
     Dinv = diagm(Dinv)
     pinv = Vt*Dinv*adjoint(U)  # Vt is already transposed
     pos[:] .= pinv*C[:];
-    return pos,M,C;
+    return pos;
+end
+
+function minimize_distances(shift_matrices)
+    sz2d = max.(size.(shift_matrices)...)
+    nd = length(shift_matrices)
+    pos = zeros(sz2d..., nd) # allocated as 3d object but used as 1d object in the linear equation system. Last dimension: x and y
+
+    for current_dim = 1:nd
+        pos[:,:,current_dim] = minimize_distances(shift_matrices, current_dim)
+    end
+    return pos
 end
 
 """
@@ -223,7 +221,8 @@ function get_strain(pos, shift_matrix)
     dirvec = size(pos)[1:end-1] .- size(shift_matrix);
     strain = zeros(size(shift_matrix));
     for ind in CartesianIndices(shift_matrix)
-        strain[ind] = norm((pos[ind[1]+dirvec[1], ind[2]+dirvec[2],:] .- pos[ind[1],ind[2],:] ) .- shift_matrix[ind])
+        ind_shift = Tuple(ind) .+ dirvec 
+        strain[ind] = norm((pos[ind_shift..., :] .- pos[Tuple(ind)..., :] ) .- shift_matrix[ind])
     end
     return strain
 end
@@ -255,23 +254,25 @@ function find_pos(images, masks=nothing; shift_vecs = nothing, est_std=15.0, off
     if (do_inpaint)
         images = inpaint_imgs(images, masks);
     end
-    if isnothing(shift_vecs)
-        shift_down_matrix = find_rel_pos(images, (1,0), masks, est_std=est_std)
-        shift_right_matrix = find_rel_pos(images, (0,1), masks, est_std=est_std)
-    else  # the user defined some preferred shift
-        shift_down_matrix = find_rel_pos(images, (1,0), masks, shift_vec = shift_vecs[1], est_std=est_std)
-        shift_right_matrix = find_rel_pos(images,(0,1), masks, shift_vec = shift_vecs[2], est_std=est_std)
+    nd = ndims(images)
+    shift_matrices = []
+    for d=1:nd
+        current_diff_dir = direction_tuple(d, nd)
+        if isnothing(shift_vecs)
+            push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, est_std=est_std))
+        else  # the user defined some preferred shift
+            push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, shift_vec = shift_vecs[d], est_std=est_std))
+        end
     end
-
-    pos, M, C = minimize_distances(shift_down_matrix, shift_right_matrix)
+    pos = minimize_distances(shift_matrices)
 
     if (StrainThresh > 0)
-        bad_down = limit_strain!(pos, shift_down_matrix, StrainThresh)
-        bad_right = limit_strain!(pos, shift_right_matrix, StrainThresh)
+        bad_down = limit_strain!(pos, shift_matrices[1], StrainThresh)
+        bad_right = limit_strain!(pos, shift_matrices[2], StrainThresh)
         if (bad_down + bad_right > 0)
             print("$(bad_down) vertical and $(bad_right) horizontal correlations were unsuccessful trying to rearrange by ignoring those.\n")
             try 
-                pos, M, C = minimize_distances(shift_down_matrix, shift_right_matrix)
+                pos = minimize_distances(shift_matrices)
             catch
                 print("Matrix was singular. Ignoring last attempt to kick out vectors.\n")
             end
@@ -287,7 +288,7 @@ function find_pos(images, masks=nothing; shift_vecs = nothing, est_std=15.0, off
     # end
     # display(p)
 
-    pos = collect(pos[x,y,:] for x = 1:size(pos,1), y = 1:size(pos,2)) # convert to the array of vectors format
+    pos = collect(Tuple(pos[Tuple(ind)...,:]) for ind = CartesianIndices(size(pos)[1:end-1])) # convert to the array of vectors format
     return pos;
 end
 
@@ -297,51 +298,76 @@ end
 
 generates a weight mask for each tile also avoiding zeros in the title
 """
-function get_dt_weights(tile, thresh= mean(tile))
-    res = zeros(Bool, size(tile))
-    res[1,:] .= true; res[end,:] .= true; res[:,1] .= true; res[:,end] .= true;
-    #m = (pb .> thresh) .+  0.0;
-    res = res .| (tile .< thresh)
-    bw = feature_transform(res)        #DT
+function get_dt_weights(mask)
+    bw = feature_transform(.~mask)        #DT
     return distance_transform(bw)      #DT
 end
 
 """
     stitch(imgs, pos, big_size = nothing)
 
-pos: a matrix of center positions for each tile in the big image
-big_size: optionally specifies the size of the result image
+pos: a matrix of center positions for each tile in the big stitched image
+big_size: optionally specifies the wanted size of the result image
+
+The positions can be obtained by using `find_pos` on the stack of images (including possible masks).
+
 """
-function stitch(imgs, pos, big_size = nothing)
-    if (size(imgs, 2) < 2)
+function stitch(imgs, pos, masks=nothing; big_size = nothing, Eps = 0.001)
+    if (ndims(imgs) < ndims(pos))
         imgs = reshape(imgs, size(pos));
     end
-    img_sz = size(imgs[1])
+    # nd = ndims(imgs[1])
+    img_sz = size(imgs[1]) # size of one individual image
     if (isnothing(big_size))
-        max_shift = (0,0)
+        max_shift = zeros(Int, ndims(pos))
         for cpos in pos
             max_shift = max.(max_shift, ceil.(Int, abs.(cpos)))
         end
-        big_size=(2*max_shift[1]+size(imgs[1],1), 2*max_shift[2]+size(imgs[1],2), img_sz[3]);
+        big_size = expand_size(Tuple(2 .*max_shift .+ img_sz[1:length(max_shift)]), img_sz)
     end
     res = zeros(Float64, big_size)  # Specify the type explicitly
-    weights = zeros(Float64, big_size)  # Specify the type explicitly
     #wa = zeros(Float64, (160, 160))
-    wa = zeros(Float64, (big_size..., img_sz[3]))   #3D
-    big_mid = big_size .÷ 2 .+1;
-    for (tile, current_pos) in zip(imgs, pos)
-        myweights = get_dt_weights(sum(tile, dims=(3,)))[:,:,1];
+    # wa = zeros(Float64, (big_size..., img_sz[3]))   #3D
+    # wa = zeros(Float64, big_size)   #3D
+    big_mid = big_size .÷ 2 .+1;    
+    myweights, weight_size = let
+    if (isnothing(masks))
+            mask = ones(Bool, img_sz[1:length(pos[1])])
+            set_border!(mask, false)
+            get_dt_weights(mask), big_size[1:ndims(mask)]
+            else
+            if (!is_mask_array(masks))
+                mask = copy(mask)
+                set_border!(mask, false)
+                get_dt_weights(masks), big_size[1:ndims(masks)]
+            else
+                nothing, big_size[1:ndims(masks[1])]
+            end
+        end
+    end
+    weights = zeros(eltype(imgs[1]), weight_size)  # Specify the type explicitly
+
+    for (tile, current_pos, tile_idx) in zip(imgs, pos, CartesianIndices(size(imgs)))            
+        myweights = let
+        if (is_mask_array(masks))
+            mask = copy(masks[tile_idx])
+            set_border!(mask, false)
+            get_dt_weights(mask);
+        else
+            myweights
+        end
+        end
         # mid_z = size(tile,3)÷2+1;
-        cp = (round.(Int, current_pos)...,)
+        cpos = (round.(Int, current_pos)...,)
         # print("pos: $(current_pos), cp $(cp) \n")
-        res_view = select_region_view(res, new_size=size(tile), center=big_mid .+ (cp..., 0));
-        weights_view = select_region_view(myweights, new_size=size(tile)[1:2], center=cp)
+        res_view = select_region_view(res, new_size=size(tile), center = expand_size(cpos .+ big_mid[1:length(cpos)], big_mid));
+        weights_view = select_region_view(weights, new_size=size(myweights), center = cpos .+ big_mid[1:length(cpos)])
         res_view .+= tile .* myweights;
         weights_view .+= myweights;
 
         # res .+= shift(select_region(weighted, new_size=big_size), (current_pos...,mid_z));  #3D
         # weights .+= shift(select_region(myweights, new_size=big_size[1:2]), (current_pos...,mid_z));
     end
-    weights[weights .< 0.001] .= 1e10;
+    weights[weights .< Eps] .= Eps;
     return res./weights;
 end

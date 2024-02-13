@@ -184,11 +184,11 @@ the other coordinates are modified by the distance `dist`.
 If the index does not exit, zero is returned as linear index.
 """
 function get_lin_idx(mat, indnd, dist)
-    ind2d = Tuple(indnd)[1:end-1] .+ dist
+    ind2d = Tuple(indnd) .+ dist
     inrange = all(ind2d.>0 .&& ind2d.<=size(mat)[1:end-1])
     ind1d = let 
         if (inrange)
-            LinearIndices(mat)[ind2d..., indnd[end]];
+            LinearIndices(mat)[ind2d...];
         else
             0
         end
@@ -196,3 +196,19 @@ function get_lin_idx(mat, indnd, dist)
     return ind1d
 end
 
+function direction_tuple(current_diff_dim, nd)
+    ntuple(n ->1*(n==current_diff_dim), nd)
+end
+
+"""
+    set_border(arr, val)
+
+sets the border of an array to the value val.
+"""
+function set_border!(arr, val=true)
+    for d = 1:ndims(arr)
+        slice(arr, d, 1) .= val;
+        slice(arr, d, size(arr, d)) .= val;
+    end
+    return arr
+end
