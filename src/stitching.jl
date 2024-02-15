@@ -298,9 +298,11 @@ end
 
 generates a weight mask for each tile also avoiding zeros in the title
 """
-function get_dt_weights(mask)
+function get_dt_weights(mask, blend_border = 0.5)
     bw = feature_transform(.~mask)        #DT
-    return distance_transform(bw)      #DT
+    dt = distance_transform(bw)
+    dt = max.(one(eltype(dt)) .- dt ./ (maximum(dt) * blend_border), zero(eltype(dt)))
+    return (one(eltype(mask)).+cos.(π*dt))/2
 end
 
 """
@@ -312,7 +314,7 @@ big_size: optionally specifies the wanted size of the result image
 The positions can be obtained by using `find_pos` on the stack of images (including possible masks).
 
 """
-function stitch(imgs, pos, masks=nothing; big_size = nothing, Eps = 0.001)
+function stitch(imgs, pos, masks=nothing; big_size = nothing, blend_border = 0.5, Eps = 0.001)
     if (ndims(imgs) < ndims(pos))
         imgs = reshape(imgs, size(pos));
     end
@@ -332,18 +334,18 @@ function stitch(imgs, pos, masks=nothing; big_size = nothing, Eps = 0.001)
     big_mid = big_size .÷ 2 .+1;    
     myweights, weight_size = let
     if (isnothing(masks))
-            mask = ones(Bool, img_sz[1:length(pos[1])])
+        mask = ones(Bool, img_sz[1:length(pos[1])])
+        set_border!(mask, false)
+        get_dt_weights(mask, blend_border), big_size[1:ndims(mask)]
+    else
+        if (!is_mask_array(masks))
+            mask = copy(mask)
             set_border!(mask, false)
-            get_dt_weights(mask), big_size[1:ndims(mask)]
-            else
-            if (!is_mask_array(masks))
-                mask = copy(mask)
-                set_border!(mask, false)
-                get_dt_weights(masks), big_size[1:ndims(masks)]
-            else
-                nothing, big_size[1:ndims(masks[1])]
-            end
+            get_dt_weights(masks, blend_border), big_size[1:ndims(masks)] # creates a distance-based weight to the border            
+        else
+            nothing, big_size[1:ndims(masks[1])]
         end
+    end
     end
     weights = zeros(eltype(imgs[1]), weight_size)  # Specify the type explicitly
 
@@ -352,7 +354,7 @@ function stitch(imgs, pos, masks=nothing; big_size = nothing, Eps = 0.001)
         if (is_mask_array(masks))
             mask = copy(masks[tile_idx])
             set_border!(mask, false)
-            get_dt_weights(mask);
+            get_dt_weights(mask, blend_border);
         else
             myweights
         end
