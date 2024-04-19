@@ -9,7 +9,8 @@ using FourierTools, IndexFunArrays, NDTools, LinearAlgebra, ChainRulesCore, Stat
 using Optim, Zygote # for iterative optimization of positions
 using FFTW
 using StaticArrays # for fast arrays
-using RegisterDeformation, CoordinateTransformations
+using RegisterDeformation
+using CoordinateTransformations
 # using PSFDistiller # currently needed for gaussf
 using SeparableFunctions
 using ImageMorphology # for distance-transform based weighting and erosion of masks
