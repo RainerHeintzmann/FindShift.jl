@@ -4,7 +4,6 @@ authors = ["RainerHeintzmann <heintzmann@gmail.com>"]
 version = "0.1.0"
 
 [deps]
-CenterIndexedArrays = "46a7138f-0d70-54e1-8ada-fb8296f91f24"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 FourierTools = "b18b359b-aebc-45ac-a139-9c0ccbb2871e"
