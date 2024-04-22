@@ -27,7 +27,7 @@ function get_rigid_warp(params, asize)
     M = get_rotation(asize, α, zoom) # [cos(α) -sin(α); sin(α) cos(α)]
     # the order of the line below may look surprising but the warps seem to work backwards
     M = M * SMatrix{3,3}([1.0 0.0 myshift[1];0.0 1.0 myshift[2];0.0 0.0 1.0])
-    ϕ(x) = (M*[x...,1])[1:2] # AffineMap(M, myshift)
+    ϕ(x) = (M*SVector(x...,1))[1:2] # AffineMap(M, myshift)
     return ϕ
 end 
 

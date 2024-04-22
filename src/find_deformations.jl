@@ -146,6 +146,6 @@ function align_images(img_list; average_pos=true, extra_shift=(0.25, 0.25), band
     # return rigidly_aligned, params
 
     warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:4], grid_size, average_pos=average_pos, extra_shift =extra_shift, patch_size=patch_size, pre_transform_params=params[2:end], avoid_border=avoid_border, tolerance=tolerance, warn_norm=warn_norm)
-    all_aligned = [replace_nan(warp(img_list[n], warps[n])) for n=1:length(img_list)]
+    all_aligned = [replace_nan(apply_warp(img_list[n], warps[n])) for n=1:length(img_list)]
     return all_aligned, warps 
 end

@@ -1,3 +1,31 @@
+using Interpolations
+
+function get_val(itp, fct, idx)
+    itp[fct(idx)...]
+end
+
+"""
+    apply_warp(data::Array{T,D}, fct, dst_size=size(data); interp_type=BSpline(Linear()), fillvalue=0.0)::Array{T,D} where {T,D}
+
+this function applies a warp as defined by the function `fct` to `data`. The `interp_type` determines the interpolation type,
+and `fillvalue` is the value to fill in for out-of-bounds values.
+    The function has the same user interface as the `warp` function from the `RegisterDeformation.jl` package.
+
+# Arguments
++ `data::Array{T,D}`: The data to be warped.
++ `fct`: The function defining the warp.
++ `dst_size=size(data)`: The size of the output array.
++ `interp_type=BSpline(Linear())`: The interpolation type. Default is `BSpline(Linear())`.
++ `fillvalue=0.0`: The value to fill in for out-of-bounds values. Default is NaN.
+
+
+"""
+function apply_warp(data::Array{T,D}, fct, dst_size=size(data); interp_type=BSpline(Linear()), fillvalue=T(NaN))::Array{T,D} where {T,D}
+    rfct(v) = real(T).(fct(v))
+    itp = extrapolate(interpolate(data, interp_type), fillvalue);
+    return get_val.(Ref(itp), rfct, Tuple.(CartesianIndices(dst_size)))
+end
+
 function t_imag(t1::NTuple{N,T}) where {N,T}
     imag.(t1)
 end

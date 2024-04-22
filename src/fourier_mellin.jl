@@ -71,7 +71,10 @@ function fourier_mellin(img1::AbstractArray{T,N}, img2::AbstractArray{T,N}; radi
     # res = resample_nfft(img1, t -> rotα(t) .* zoom)
 
     ϕ = get_rigid_warp((α, zoom, [RT(0.0), RT(0.0)]), size(img1))
-    res = replace_nan(warp(img1, ϕ, size(img1)))
+
+    # res = replace_nan(warp(img1, ϕ, size(img1), fillvalue=0f0))
+    # res = warp(img1, ϕ, size(img1), fillvalue=zero(RT))
+    res = apply_warp(img1, ϕ, size(img1), fillvalue=zero(RT))
     
     # ashift, err, phasediff = phase_offset(res, img2; upsample_factor=100)
     ashift = find_shift_iter(img2, res) # do not normalize, as this may cause trouble, if the mean is close to zero!

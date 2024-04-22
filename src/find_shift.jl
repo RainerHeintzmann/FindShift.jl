@@ -61,7 +61,7 @@ function find_ft_shift_iter(fdat1::AbstractArray{T,N}, fdat2::AbstractArray{T,N}
 
     loss(v) = mynorm(fdat1, exp_shift_dat(fdat2, v)) # win .* 
     function g!(G, x)  # (G, x)
-        G .= gradient(loss, x)[1]
+        G .= Zygote.gradient(loss, x)[1]
     end
     # p_est = [1.0, zeros(ndims(fdat2))...]
     p_est = zeros(real(T), ndims(fdat2))
@@ -298,7 +298,7 @@ function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true,
     #@show typeof(k_est)
     #@show mygrad(k_est)
     function g!(G, x)  # (G, x)
-        G .= gradient(mynorm2,x)[1]
+        G .= Zygote.gradient(mynorm2,x)[1]
     end
     # x = -1:0.1:1; plot(x,[mynorm2(k_est .+ [0,p]) for p in x]); plot!(x,[mynorm2(k_est .+ [p,0]) for p=-1:0.1:1])
     # plot(x,[gradient(mynorm2,(k_est .+ [0,p]))[1][2] for p in x]); plot!(x,[gradient(mynorm2,(k_est .+ [p,0]))[1][1] for p in x])
@@ -469,7 +469,7 @@ function optim_correl(dat, other=dat; k_est = nothing, method=:FindZoomFT, verbo
         #@show k_est
         lower = k_est .- 2.1
         upper = k_est .+ 2.1
-        mygrad(x) = gradient(mynorm,x)[1]
+        mygrad(x) = Zygote.gradient(mynorm,x)[1]
         function g!(G, x)
             G .= mygrad(x)
         end
