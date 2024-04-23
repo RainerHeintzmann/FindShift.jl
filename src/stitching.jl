@@ -314,12 +314,13 @@ big_size: optionally specifies the wanted size of the result image
 The positions can be obtained by using `find_pos` on the stack of images (including possible masks).
 
 """
-function stitch(imgs, pos, masks=nothing; big_size = nothing, blend_border = 0.5, Eps = 0.001)
+function stitch(imgs, pos, masks=nothing; big_size = nothing, blend_border = 0.5, Eps = 0.001, diagnostic=false)
     if (ndims(imgs) < ndims(pos))
         imgs = reshape(imgs, size(pos));
     end
     # nd = ndims(imgs[1])
     img_sz = size(imgs[1]) # size of one individual image
+    DT = eltype(imgs[1])
     if (isnothing(big_size))
         max_shift = zeros(Int, ndims(pos))
         for cpos in pos
@@ -327,7 +328,12 @@ function stitch(imgs, pos, masks=nothing; big_size = nothing, blend_border = 0.5
         end
         big_size = expand_size(Tuple(2 .*max_shift .+ img_sz[1:length(max_shift)]), img_sz)
     end
-    res = zeros(Float64, big_size)  # Specify the type explicitly
+    res = zeros(DT, big_size)  # Specify the type explicitly
+
+    res_full = nothing
+    if (diagnostic)
+        res_full = zeros(DT, (big_size..., prod(size(imgs))))  # make space for individual images
+    end
     #wa = zeros(Float64, (160, 160))
     # wa = zeros(Float64, (big_size..., img_sz[3]))   #3D
     # wa = zeros(Float64, big_size)   #3D
@@ -349,6 +355,7 @@ function stitch(imgs, pos, masks=nothing; big_size = nothing, blend_border = 0.5
     end
     weights = zeros(eltype(imgs[1]), weight_size)  # Specify the type explicitly
 
+    tn=1
     for (tile, current_pos, tile_idx) in zip(imgs, pos, CartesianIndices(size(imgs)))            
         myweights = let
         if (is_mask_array(masks))
@@ -364,12 +371,20 @@ function stitch(imgs, pos, masks=nothing; big_size = nothing, blend_border = 0.5
         # print("pos: $(current_pos), cp $(cp) \n")
         res_view = select_region_view(res, new_size=size(tile), center = expand_size(cpos .+ big_mid[1:length(cpos)], big_mid));
         weights_view = select_region_view(weights, new_size=size(myweights), center = cpos .+ big_mid[1:length(cpos)])
+        if (diagnostic)
+            res_full_view = select_region_view(res_full, new_size=(size(tile)...,1), center = (expand_size(cpos .+ big_mid[1:length(cpos)], big_mid)..., tn));
+            res_full_view .+= tile;
+        end
         res_view .+= tile .* myweights;
         weights_view .+= myweights;
+        tn += 1;
 
         # res .+= shift(select_region(weighted, new_size=big_size), (current_pos...,mid_z));  #3D
         # weights .+= shift(select_region(myweights, new_size=big_size[1:2]), (current_pos...,mid_z));
     end
     weights[weights .< Eps] .= Eps;
+    if (diagnostic)
+        return res./weights, res_full
+    end
     return res./weights;
 end
