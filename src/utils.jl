@@ -58,15 +58,30 @@ function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
     imag.(s1 .* s2)  # t_imag
 end
 
-function find_max(dat; exclude_zero=true)
-    arr = abs.(dat)
+"""
+    find_max(arr; exclude_zero=true, dims=1:ndims(arr))
+
+finds the maximum of an array `arr` and returns the position of the maximum with respect to the Fourier-center.
+The `exclude_zero` flag determines whether the center of the array should be excluded from the search.
+The `dims` argument specifies the dimensions along which the maximum should be found.
+
+# Arguments
++ `arr`: The array for which the maximum should be found. 
++ `exclude_zero=true`: If true, the center of the array is excluded from the search.
++ `dims=1:ndims(arr)`: The dimensions along which the maximum should be found.
+
+"""
+function find_max(arr; exclude_zero=true, dims=1:ndims(arr))
     mid = center(size(arr), CenterFT)
+    tmp = arr[mid...] # remember the center value
     if exclude_zero
         arr[mid...] = 0
     end
-    arr[mid...] 
-    m,p = findmax(arr)
-    Tuple(p) .- mid
+    sub_idx = ntuple(d -> (d in dims) ? Colon() : (mid[d]:mid[d]), Val(ndims(arr)))
+    mid_modified = ntuple(d -> (d in dims) ? mid[d] : 1, Val(ndims(arr)))
+    m,p = findmax(@view arr[sub_idx...])
+    arr[mid...] = tmp;
+    return (Tuple(p) .- mid_modified)
 end
 
 """ 

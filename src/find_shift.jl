@@ -83,7 +83,7 @@ end
 
 # using View5D
 """
-    find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=nothing, est_pos=nothing, est_std=10.0, lambda=0.05)
+    find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=nothing, est_pos=nothing, est_std=10.0, lambda=0.05, dims=1:ndims(dat1))
 
 finds the integer shift with between two input images via the maximum of the cross-correlation.
 
@@ -127,7 +127,7 @@ julia> find_shift_iter(simg, img)
  3.298879717301924
  4.449585689185147
 """
-function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=nothing, est_pos=nothing, est_std=10.0, lambda=0.05, exclude_zero=false)
+function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=nothing, est_pos=nothing, est_std=10.0, lambda=0.05, exclude_zero=false, dims=1:ndims(dat1))
     if isnothing(Δx)
         mycor = let
             if (!isnothing(mask1) || !isnothing(mask2))
@@ -153,7 +153,7 @@ function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=
             preference_mask = gaussian_col(typeof(mycor), size(mycor); sigma=est_std, pos=est_pos)
             mycor .*= preference_mask;
         end
-        Δx = find_max(mycor, exclude_zero=exclude_zero)
+        Δx = find_max(mycor, exclude_zero=exclude_zero, dims=dims)
     end
     if !isnothing(zoom)
         if length(zoom) == 1
@@ -165,7 +165,7 @@ function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=
         # this is quite slow. Would be nice to use a real-valued CZT where appropriate
         red_size = ceil.(Int, 2 .*zoom); # +- 0.5 pixel are allowed.
         mycor = iczt(fmul2, zoom, 1:ndims(fmul2), red_size)
-        pos2 = find_max(abs2.(mycor), exclude_zero=false)
+        pos2 = find_max(abs2.(mycor), exclude_zero=false, dims=dims)
         return Δx .+ pos2 ./zoom
     end
     return Δx
@@ -280,7 +280,7 @@ function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true,
 
     k_est = let
         if isnothing(k_est)
-            find_max(abs.(ft(wdat)), exclude_zero=exclude_zero)
+            find_max(abs2.(ft(wdat)), exclude_zero=exclude_zero)
         else
             k_est
         end

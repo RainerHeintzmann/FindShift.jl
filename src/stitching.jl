@@ -84,7 +84,7 @@ end
 
 
 """
-    find_rel_pos(imgs, shift_idx, masks=nothing; sigma = (1,1), shift_vec=nothing, est_std=10.0)
+    find_rel_pos(imgs, shift_idx, masks=nothing; shift_vec=nothing, est_std=10.0, exclude_zero=true)
 
 determines the relative shifts in an matrix of images topologically arranged correctly. Note that no further preprocessing or
 inpainting is performed on the `imgs`. This all needs to be performed before submitting the images to this routine.
@@ -93,10 +93,13 @@ inpainting is performed on the `imgs`. This all needs to be performed before sub
 - `imgs`:   the images arranged in a matrix (or higher order tensor)
 - 'shift_idx':  the relative topological shift direction to look into in this round
 - `masks`:  a single mask (to be applied to all images) or a similarly topologically arranged series of masks.
+- `shift_vec`:  a vector of shifts to start the search from. If not provided, all results are acceptable. Default: nothing
+- `est_std`:  the standard deviation of the Gaussian used for masking the cross-correlation (only if `shift_vec` is provided). Default: 10.0
+- `exclude_zero`:  if true, the zero shift will be excluded from the search. Default: true
 
 returns a tensor of relative shifts.
 """
-function find_rel_pos(imgs, shift_idx, masks=nothing; sigma = (1,1), shift_vec=nothing, est_std=10.0, exclude_zero=true)
+function find_rel_pos(imgs, shift_idx, masks=nothing; shift_vec=nothing, est_std=10.0, exclude_zero=true, dims=1:ndims(imgs))
     mat_sz = size(imgs);
 
     shift_matrix = Array{NTuple{2,Float64}}(undef, mat_sz[1]-shift_idx[1], mat_sz[2]-shift_idx[2]) 
@@ -122,9 +125,9 @@ function find_rel_pos(imgs, shift_idx, masks=nothing; sigma = (1,1), shift_vec=n
         # shift_vec = expand_size(shift_vec, Tuple(zeros(Int, ndims(ref_img))))
         Δx = let 
             if (isnothing(shift_vec))
-                find_shift(ref_img, dat_img; mask1=mask_ref, mask2=mask_dat, exclude_zero=exclude_zero)
+                find_shift(ref_img, dat_img; mask1=mask_ref, mask2=mask_dat, exclude_zero=exclude_zero, dims = dims)
             else
-                find_shift(ref_img, dat_img; mask1=mask_ref, mask2=mask_dat, est_pos=shift_vec, est_std=est_std, exclude_zero=exclude_zero)
+                find_shift(ref_img, dat_img; mask1=mask_ref, mask2=mask_dat, est_pos=shift_vec, est_std=est_std, exclude_zero=exclude_zero, dims = dims)
             end
         end 
         # print("idx $(ref_ind), found $(Δx)\n");
@@ -246,11 +249,11 @@ end
 
 
 """
-    find_pos(imgs, masks=nothing; shift_vecs = nothing, est_std=15.0, offset=(20, 20), verbose=true, StrainThresh=4.0) # m((6,-9),(3, 22))
+    find_pos(imgs, masks=nothing; shift_vecs = nothing, est_std=15.0, offset=(20, 20), verbose=true, StrainThresh=4.0, dims=1:ndims(images)) # m((6,-9),(3, 22))
 
 determines the relative positions in a matrix of images (topologically assumed to be in the correct order)
 """
-function find_pos(images, masks=nothing; shift_vecs = nothing, est_std=15.0, offset=(20, 20), StrainThresh=5.0, do_inpaint=false) # m((6,-9),(3, 22))
+function find_pos(images, masks=nothing; shift_vecs = nothing, est_std=10.0, offset=(20, 20), StrainThresh=5.0, do_inpaint=false, dims=1:ndims(images)) # m((6,-9),(3, 22))
     if (do_inpaint)
         images = inpaint_imgs(images, masks);
     end
@@ -259,9 +262,9 @@ function find_pos(images, masks=nothing; shift_vecs = nothing, est_std=15.0, off
     for d=1:nd
         current_diff_dir = direction_tuple(d, nd)
         if isnothing(shift_vecs)
-            push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, est_std=est_std))
+            push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, est_std=est_std, dims=dims))
         else  # the user defined some preferred shift
-            push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, shift_vec = shift_vecs[d], est_std=est_std))
+            push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, shift_vec = shift_vecs[d], est_std=est_std, dims=dims))
         end
     end
     pos = minimize_distances(shift_matrices)
@@ -279,7 +282,7 @@ function find_pos(images, masks=nothing; shift_vecs = nothing, est_std=15.0, off
         end
     end
 
-    pos .+= reorient(offset .- pos[1,1,:], Val(3))    
+    pos .+= reorient(offset .- pos[ones(Integer, ndims(pos)-1)..., :], Val(ndims(pos)))
 
     # pos = shift_down_matrixpositon
     # p = scatter(legend=false, framestyle=:box, xlabel="x-", ylabel="y-position")
