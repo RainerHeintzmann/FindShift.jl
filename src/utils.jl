@@ -228,7 +228,7 @@ If the index does not exit, zero is returned as linear index.
 """
 function get_lin_idx(mat, indnd, dist)
     ind2d = Tuple(indnd) .+ dist
-    inrange = all(ind2d.>0 .&& ind2d.<=size(mat)[1:end-1])
+    inrange = all(ind2d.>0 .&& ind2d.<=size(mat)[1:length(indnd)]) # trailing dimensions in the matrix are ignored for index calculation
     ind1d = let 
         if (inrange)
             LinearIndices(mat)[ind2d...];

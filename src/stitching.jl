@@ -342,19 +342,19 @@ function stitch(imgs, pos, masks=nothing; big_size = nothing, blend_border = 0.5
     # wa = zeros(Float64, big_size)   #3D
     big_mid = big_size .÷ 2 .+1;    
     myweights, weight_size = let
-    if (isnothing(masks))
-        mask = ones(Bool, img_sz[1:length(pos[1])])
-        set_border!(mask, false)
-        get_dt_weights(mask, blend_border), big_size[1:ndims(mask)]
-    else
-        if (!is_mask_array(masks))
-            mask = copy(mask)
+        if (isnothing(masks))
+            mask = ones(Bool, img_sz[1:length(pos[1])])
             set_border!(mask, false)
-            get_dt_weights(masks, blend_border), big_size[1:ndims(masks)] # creates a distance-based weight to the border            
+            get_dt_weights(mask, blend_border), big_size[1:ndims(mask)]
         else
-            nothing, big_size[1:ndims(masks[1])]
+            if (!is_mask_array(masks))
+                mask = copy(masks)
+                set_border!(mask, false)
+                get_dt_weights(mask, blend_border), big_size[1:ndims(mask)] # creates a distance-based weight to the border            
+            else
+                nothing, big_size[1:ndims(masks[1])]
+            end
         end
-    end
     end
     weights = zeros(eltype(imgs[1]), weight_size)  # Specify the type explicitly
 
