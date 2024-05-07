@@ -152,15 +152,28 @@ The first index of x will be forced to zero.
 Note that this problem is separable in the dimensions, which is why it should be called for every dimension `current_dim` independently
 """
 function minimize_distances(shift_matrices, current_dim)
+
     # shift_right_matrix = permutedims(shift_right_matrix)
     # shift_down_matrix = permutedims(shift_down_matrix)
-    sz2d = max.(size.(shift_matrices)...)
+    sz2d = ntuple((d) -> size(shift_matrices[d], d) +1, length(shift_matrices)) 
+    # sz2d = max.(size.(shift_matrices)...)
     pos = zeros(sz2d...) # allocated as 3d object but used as 1d object in the linear equation system. Last dimension: x and y
+    nd = length(shift_matrices)
+    ndpos = length(shift_matrices[1][1])
+
+    if (nd < 2)
+        for indxy = 2:ndpos
+            pos[indxy] = shift_matrices[1][indxy-1][current_dim]
+        end
+        return pos;
+    end
+    # if isempty(shift_matrices[current_dim])
+    #     return pos;
+    # end
     C = zeros(sz2d...);  # allocated as 3D object but used as 1d object in the linear equation system. Last dimension: x and y
     # sz3d = size(pos)
     lsz = prod(sz2d)
     M = zeros((lsz, lsz)); # allocated and used as 2d matrix
-    nd = length(shift_matrices)
     # for ind3d in CartesianIndices(sz3d)
     for indxy in CartesianIndices(sz2d)
         for current_diff_dim in 1:nd # iterate over the various topological difference-directions characterised by the shift_matrices 
@@ -192,7 +205,7 @@ function minimize_distances(shift_matrices, current_dim)
     # M[1, lsz÷2+1] = 1; C[lsz÷2+1] = 0; # forcing the y-position of the first solution to zero
     # return nothing, M,C;
     U,D,Vt = svd(M)
-    if (D[end-nd-1]/D[1] < 1e-5)
+    if (D[end-ndpos-1]/D[1] < 1e-5)
         error("Matrix Singular")
     end
     Dinv = D
@@ -204,12 +217,18 @@ function minimize_distances(shift_matrices, current_dim)
 end
 
 function minimize_distances(shift_matrices)
-    sz2d = max.(size.(shift_matrices)...)
-    nd = length(shift_matrices)
+    # sz2d = max.(size.(shift_matrices)...)
+    sz2d = ntuple((d) -> size(shift_matrices[d], d) +1, length(shift_matrices)) 
+    nd = length(shift_matrices[1][1])
     pos = zeros(sz2d..., nd) # allocated as 3d object but used as 1d object in the linear equation system. Last dimension: x and y
 
+    # if length(size(shift_matrices)) == 1
+    #     pos[1,1,:] = [(shift_matrices[1][:][1])...]
+    #     return pos
+    # end
     for current_dim = 1:nd
-        pos[:,:,current_dim] = minimize_distances(shift_matrices, current_dim)
+        dst_ind = ntuple(d-> d == ndims(pos) ? current_dim : Colon(), ndims(pos))
+        pos[dst_ind...] = minimize_distances(shift_matrices, current_dim)
     end
     return pos
 end
@@ -261,19 +280,28 @@ function find_pos(images, masks=nothing; shift_vecs = nothing, est_std=10.0, off
     shift_matrices = []
     for d=1:nd
         current_diff_dir = direction_tuple(d, nd)
-        if isnothing(shift_vecs)
-            push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, est_std=est_std, dims=dims))
-        else  # the user defined some preferred shift
-            push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, shift_vec = shift_vecs[d], est_std=est_std, dims=dims))
+        if (size(images, d) > 1)
+            if isnothing(shift_vecs) || isempty(shift_vecs[d])
+                push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, est_std=est_std, dims=dims))
+            else  # the user defined some preferred shift
+                push!(shift_matrices, find_rel_pos(images, current_diff_dir, masks, shift_vec = shift_vecs[d], est_std=est_std, dims=dims))
+            end
         end
     end
     pos = minimize_distances(shift_matrices)
 
     if (StrainThresh > 0)
-        bad_down = limit_strain!(pos, shift_matrices[1], StrainThresh)
-        bad_right = limit_strain!(pos, shift_matrices[2], StrainThresh)
-        if (bad_down + bad_right > 0)
-            print("$(bad_down) vertical and $(bad_right) horizontal correlations were unsuccessful trying to rearrange by ignoring those.\n")
+        bad = 0
+        for d=1:nd
+            if length(shift_matrices)>=d && !isempty(shift_matrices[d])
+                bad_now = limit_strain!(pos, shift_matrices[d], StrainThresh)
+                #if (bad_now > 0)
+                    print("$(bad_now) correlations along direction $(d) were unsuccessful trying to rearrange by ignoring those.\n")
+                #end
+                bad += bad_now
+            end
+        end
+        if (bad > 0)
             try 
                 pos = minimize_distances(shift_matrices)
             catch
