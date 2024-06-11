@@ -117,8 +117,7 @@ end
 
 aligns a list of image (`img_list`) to the first image (the reference) using deformations. To this aim, the image is band-pass filtered, aligned rigidly via a Fourier-Mellin transformation
 and then a patch-based alignment is performed. It is important that the images have some information almost everywhere.
-Returned ia a tuple of the aligned images and a vector of warps to perform the transform for any other images via the "warp" call.
-
+Returned is a tuple of the aligned images and a vector of warps to perform the transform for any other images via the "warp" call.
 
 #Arguments
 + `img_list`: a vector of (2D-) images to align. the first is the reference image.
