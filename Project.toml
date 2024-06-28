@@ -16,14 +16,15 @@ Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 SeparableFunctions = "c8c7ead4-852c-491e-a42d-3d43bc74259e"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+ThinPlateSplines = "1d861738-f48e-4029-b1d3-81ce6bc7f5ab"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
 FFTW = "1.4, 1.5, 1.6, 1.7, 1.8"
 IndexFunArrays = "0.2"
 NDTools = "0.5, 0.6, 0.7"
-StaticArrays = "0.1.5, 0.3, 0.4, 0.13, 0.14, 1"
 SeparableFunctions = "0.1"
+StaticArrays = "0.1.5, 0.3, 0.4, 0.13, 0.14, 1"
 julia = "1.7, 1.8, 1.9, 1.10"
 
 [extras]

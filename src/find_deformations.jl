@@ -10,6 +10,24 @@ function get_default_markers(image, grid_size=(5,5))
     return nodes
 end
 
+function get_node_matrix(nodes)
+    nodes_col = [collect(nodes[d]) for d in 1:length(nodes)]
+    nodemat = zeros(2, (length(nodes[d]) for d in 1:length(nodes))...)
+    for ci in CartesianIndices(nodemat)
+        nodemat[ci] = nodes_col[ci[1]][ci[1+ci[1]]]
+    end
+    return nodemat
+end
+
+function get_tps_solution(node_mat, myshifts, stiffness=1.0)
+    shifted_pos = node_mat .+ myshifts
+    x1 = collect(transpose(reshape(node_mat, (size(node_mat)[1], prod(size(node_mat)[2:end])))))
+    x2 = collect(transpose(reshape(shifted_pos, (size(node_mat)[1], prod(size(node_mat)[2:end]))))) 
+    # @show x1
+    # @show x2
+    return tps_solve(x1, x2, stiffness)    
+end
+
 
 """
     find_deformations(fixed, movings, grid_size=(5,5); patch_size=max.(size(fixed) .÷ grid_size,5), tolerance = max.(size(fixed) .÷ grid_size,5), pre_transform_params=nothing)
@@ -77,15 +95,37 @@ function find_deformations(fixed, movings, grid_size=(11, 11); average_pos=false
         ni += 1
     end
     mean_shifts = sum_shifts ./ (1 + length(movings)) # the 1 accounts for the zero shift of the reference image
+    stiffness = 1.0
+    node_mat = get_node_matrix(nodes)
+    dst_size = size(fixed)
+    cind = CartesianIndices(dst_size)
     if average_pos
-        warps = [GridDeformation(myshifts .+ mean_shifts .+ extra_shift, nodes) for myshifts in all_shifts]
-        warps = [GridDeformation(mean_shifts .+ extra_shift, nodes), warps...]
+        # @show nodes
+        # @show size(all_shifts[1])
+        # @show size(mean_shifts)
+        # @show extra_shift
+        sol1 = [get_tps_solution(node_mat, myshifts .+ mean_shifts .+ extra_shift, stiffness) for myshifts in all_shifts]
+        warps = [tps_deform(cind, sol, Val(prod(grid_size)))  for sol in sol1]
+
+        # warps = [(x)->tps_deform(x, sol) for sol in sol1]
+        sol2 = get_tps_solution(node_mat, mean_shifts .+ extra_shift, stiffness)
+        warps = [tps_deform(cind, sol2, Val(prod(grid_size))), warps...]
+        # warps = [(x)->tps_deform(x, sol2), warps...]
+        # warps = [GridDeformation(myshifts .+ mean_shifts .+ extra_shift, nodes) for myshifts in all_shifts]
+        # warps = [GridDeformation(mean_shifts .+ extra_shift, nodes), warps...]
     else
-        warps = [GridDeformation(myshifts, nodes) for myshifts in all_shifts]
+        sol1 = [get_tps_solution(node_mat, myshifts, stiffness) for myshifts in all_shifts]
+        warps = [tps_deform(cind, sol, Val(prod(grid_size)))  for sol in sol1]
+        # warps = [(x)->tps_deform(x, sol) for sol in sol1]
+        # warps = [GridDeformation(myshifts, nodes) for myshifts in all_shifts]
         if norm(extra_shift) == 0
-            warps = [IdentityTransformation, warps...]
+            warps = [collect(Tuple.(cind)), warps...]
+            # warps = [IdentityTransformation, warps...]
         else
-            warps = [GridDeformation(mean_shifts.*0 .+ extra_shift, nodes), warps...]
+            sol2 = get_tps_solution(node_mat, extra_shift, stiffness)
+            warps = [tps_deform(cind, sol2, Val(prod(grid_size))), warps...]
+            # warps = [(x)->tps_deform(x, sol2), warps...]
+            # warps = [GridDeformation(mean_shifts.*0 .+ extra_shift, nodes), warps...]
         end
     end
     return warps
@@ -145,6 +185,7 @@ function align_images(img_list; average_pos=true, extra_shift=(0.25, 0.25), band
     # return rigidly_aligned, params
 
     warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:4], grid_size, average_pos=average_pos, extra_shift =extra_shift, patch_size=patch_size, pre_transform_params=params[2:end], avoid_border=avoid_border, tolerance=tolerance, warn_norm=warn_norm)
-    all_aligned = [replace_nan(apply_warp(img_list[n], warps[n])) for n=1:length(img_list)]
+    # all_aligned = [replace_nan(apply_warp(img_list[n], warps[n])) for n=1:length(img_list)]
+    all_aligned = [replace_nan(apply_warp(img_list[n], warps[n])) for n in eachindex(img_list)]
     return all_aligned, warps 
 end

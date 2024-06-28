@@ -4,6 +4,21 @@ function get_val(itp, fct, idx)
     itp[fct(idx)...]
 end
 
+function get_val(itp, idx)
+    itp[idx...]
+end
+
+function cartesian_to_matrix(ci::CartesianIndices)
+    coords = zeros(Int, prod(size(ci)), ndims(ci))
+    n = 1
+    for c in ci
+        coords[n,:] .= Tuple(c)
+        n += 1
+    end
+    return coords
+end
+
+
 """
     apply_warp(data::Array{T,D}, fct, dst_size=size(data); interp_type=BSpline(Linear()), fillvalue=0.0)::Array{T,D} where {T,D}
 
@@ -13,7 +28,7 @@ and `fillvalue` is the value to fill in for out-of-bounds values.
 
 # Arguments
 + `data::Array{T,D}`: The data to be warped.
-+ `fct`: The function defining the warp.
++ `fct`: The function defining the warp: gets an input coordinate and returns the output coordinate.
 + `dst_size=size(data)`: The size of the output array.
 + `interp_type=BSpline(Linear())`: The interpolation type. Default is `BSpline(Linear())`.
 + `fillvalue=0.0`: The value to fill in for out-of-bounds values. Default is NaN.
@@ -24,6 +39,65 @@ function apply_warp(data::Array{T,D}, fct, dst_size=size(data); interp_type=BSpl
     rfct(v) = real(T).(fct(v))
     itp = extrapolate(interpolate(data, interp_type), fillvalue);
     return get_val.(Ref(itp), rfct, Tuple.(CartesianIndices(dst_size)))
+end
+
+function apply_warp(data::Array{T,D}, warped_coordinates::AbstractArray; interp_type=BSpline(Linear()), fillvalue=T(NaN))::Array{T,D} where {T,D}
+    itp = extrapolate(interpolate(data, interp_type), fillvalue);
+    return get_val.(Ref(itp), warped_coordinates)
+end
+
+function apply_tps_warp(data::Array{T,D}, tps, dst_size=size(data), ::Val{PTS}=Val(81); interp_type=BSpline(Linear()), fillvalue=T(NaN))::Array{T,D} where {T,D, PTS}
+    # ci = CartesianIndices(dst_size)
+    # coords = cartesian_to_matrix(ci)
+    # warped_coords = fct(coords)
+    itp = extrapolate(interpolate(data, interp_type), fillvalue);
+    # res = zeros(T, dst_size)
+    # res[ci] .=  get_val.(Ref(itp), warped_coords[:,1], warped_coords[:,2])    
+    # return res
+    pos = tps_deform(CartesianIndices(dst_size), tps, Val(PTS))
+    # @show size(pos)
+    return get_val.(Ref(itp), pos)
+end
+
+function ThinPlateSplines.tps_deform(c_ind::CartesianIndices{D}, tps::ThinPlateSpline, ::Val{M}) where {D, M}
+    sumsqr = MArray{Tuple{1, M}, Float32}(undef)  # Array{Float32, 2}(undef, 1, size(tps.x1,1))    
+    # yt = MVector{D}(zeros(Float32, D)) #   Vector{Float32}(undef, size(tps.c,2)-1);
+    cv = SMatrix{M, D}(tps.c[:,2:end]);
+    dv = SVector{D}(tps.d[1,2:end]);
+    dvv = SMatrix{D, D}((tps.d[2:end,2:end])');
+    x1t = SMatrix{D, M}(tps.x1');
+    # res = Array{MVector{D, Float32}, D}(undef, size(c_ind))
+    # res[:] .= copy.(Ref(zeros(Float32, D)))
+    res = Array{NTuple{D, Float32}, D}(undef, size(c_ind))
+    #res .= fill(zeros(Float32, D)) # copy.(zeros(Float32, D))
+    res[c_ind] .= tps_deform!.(c_ind, Ref(tps), Val(M), Ref(sumsqr), Ref(cv), Ref(dv), Ref(dvv), Ref(x1t))
+    return res
+end
+
+function tps_deform!(c_ind::CartesianIndex{D}, # yt::MVector{D}, 
+            tps::ThinPlateSpline, ::Val{M},
+            sumsqr = MArray{Tuple{1, M}, Float32}(undef),            
+            cv = SMatrix{M, D}(tps.c[:,2:end]),
+            dv = SVector{D}(tps.d[1,2:end]),
+            dvv = SMatrix{D, D}((tps.d[2:end,2:end])'),
+            x1t = SMatrix{D, M}(tps.x1')) where {D, M}
+    # x1 = tps.x1 #, tps.d # , tps.c
+	# d==[] && throw(ArgumentError("Affine component not available; run tps_solve with compute_affine=true."))
+    # all_homo_z = hcat(ones(T, size(x2,1)), x2)
+    # calculate sum of squares. Note that the summation is done outside the abs2
+	# it may be useful to join the terms below, but this seems a little harder than first thought
+    
+    sumsqr .= sum(abs2.(Tuple(c_ind) .- x1t), dims=1)
+    # yt .= (ThinPlateSplines.tps_basis.(sqrt.(sumsqr)) * cv)[1,:] # (j in 1:D)
+    # yt .+= (dvv * [Tuple(c_ind)...] .+ dv)
+    return Tuple((ThinPlateSplines.tps_basis.(sqrt.(sumsqr)) * cv)[1,:] .+ dvv * [Tuple(c_ind)...] .+ dv)
+    # @tullio sumsqr[k,j] := abs2(all_homo_z[k,m+1] .- x1[j,m])
+    # @tullio yt[i,j] := (tps_basis(sqrt(sumsqr[i,k])) * c[k,j+1]) (j in 1:D)
+    # @tullio yt[i,j] += d[l,j+1] * all_homo_z[i,l] 
+
+	# it would save some memory and possibly make it a bit faster, if the order of dimensions is changed for x and yt due to cache utilization. 
+	# but the advantage is relatively minor (10%?) since @tullio seems to take care of this as well as possible
+    # return yt
 end
 
 function t_imag(t1::NTuple{N,T}) where {N,T}
