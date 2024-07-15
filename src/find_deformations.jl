@@ -170,21 +170,29 @@ Returned is a tuple of the aligned images and a vector of warps to perform the t
 + `avoid_border`:   if `true` the no alignment for the border patches will be determined but the neighbour parameters (after rigid alignment) will be used instead
 + `warn_norm`:     a shift distance (in pixels) after pre-alignment above which a warning will be issued. 
 """
-function align_images(img_list; average_pos=true, extra_shift=(0.25, 0.25), band_pass_freq=0.25, grid_size=(10,10), patch_size=max.(size(img_list[1]) .÷ grid_size,5), tolerance=max.(size(img_list[1]) .÷ grid_size,5), avoid_border=false, warn_norm=10.0)
-    filtered = []
-    s = 0.8 ./ band_pass_freq
-    e = 1.2 ./ band_pass_freq
+function align_images(img_list; average_pos=true, extra_shift=(0.25, 0.25), no_filter=false, band_pass_freq=0.25, band_pass_low=nothing, band_pass_high=nothing, grid_size=(10,10), patch_size=max.(size(img_list[1]) .÷ grid_size,5), tolerance=max.(size(img_list[1]) .÷ grid_size,5), avoid_border=false, warn_norm=10.0)
 
-    for img in img_list
-        f = band_pass(img, s, e)
-        push!(filtered, f)
+    reference = nothing;
+    movings = nothing;
+    if !(no_filter)
+        filtered = []
+        s = isnothing(band_pass_low) ? 0.8 ./ band_pass_freq : band_pass_low
+        e = isnothing(band_pass_high) ? 1.2 ./ band_pass_freq : band_pass_high
+
+        for img in img_list
+            f = band_pass(img, s, e)
+            push!(filtered, f)
+        end
+        reference = filtered[1]
+        movings = filtered[2:end]
+    else
+        reference = img_list[1]
+        movings = [img_list[2:end]...]
     end
-    reference = filtered[1]
-    movings = filtered[2:end]
     rigidly_aligned, params = fourier_mellin_align(reference, movings)
     # return rigidly_aligned, params
 
-    warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:4], grid_size, average_pos=average_pos, extra_shift =extra_shift, patch_size=patch_size, pre_transform_params=params[2:end], avoid_border=avoid_border, tolerance=tolerance, warn_norm=warn_norm)
+    warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:end], grid_size, average_pos=average_pos, extra_shift =extra_shift, patch_size=patch_size, pre_transform_params=params[2:end], avoid_border=avoid_border, tolerance=tolerance, warn_norm=warn_norm)
     # all_aligned = [replace_nan(apply_warp(img_list[n], warps[n])) for n=1:length(img_list)]
     all_aligned = [replace_nan(apply_warp(img_list[n], warps[n])) for n in eachindex(img_list)]
     return all_aligned, warps 
