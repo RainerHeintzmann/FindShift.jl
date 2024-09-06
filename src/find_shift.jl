@@ -353,7 +353,7 @@ function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT
                 pos = get_positions(fdat, overwrite=overwrite)
                 pos[1] .- (size(dat).÷ 2 .+1)
             else
-                RT.(find_max(fdat, exclude_zero=exclude_zero))
+                RT.(find_max(abs2.(fdat), exclude_zero=exclude_zero))
             end
         else
             k_est
