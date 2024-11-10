@@ -24,6 +24,13 @@ Uses an iterative peak optimization to localize the peak to sub-pixel precision.
 """
 struct FindIter <: FindMethod end
 
+"""
+FindWaveFit
+
+Uses an gradient-based fitting based on fitting an exp(i k x) wave to the data.
+"""
+struct FindWaveFit <: FindMethod end
+
 function dist_sqr(dat1, dat2)
     sum(abs2.(dat1 .- dat2))
 end
@@ -59,6 +66,7 @@ function find_ft_shift_iter(fdat1::AbstractArray{T,N}, fdat2::AbstractArray{T,N}
         fdat2 = fdat2./sqrt(init_loss) # to help the optimization
     end
 
+    # calculates the loss directly in Fourier-space using Parseval's theorem
     loss(v) = mynorm(fdat1, exp_shift_dat(fdat2, v)) # win .* 
     function g!(G, x)  # (G, x)
         G .= Zygote.gradient(loss, x)[1]
@@ -81,7 +89,6 @@ function find_ft_shift_iter(fdat1::AbstractArray{T,N}, fdat2::AbstractArray{T,N}
     return mod.(res.minimizer, pos_sign .* size(fdat1))
 end
 
-# using View5D
 """
     find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=nothing, est_pos=nothing, est_std=10.0, lambda=0.05, dims=1:ndims(dat1))
 
@@ -272,7 +279,12 @@ function shift_cut(dat1, dat2, Δx)
     c2 = (sz2 .÷2).+1 # ifelse.(Δx .> 0, (2 .* sz2 .- szn) .÷2 .+1, ctrn)
     return select_region(dat1, center = c1, new_size=szn), select_region(dat2, center = c2, new_size=szn)
 end
+"""
+    find_ft_iter(dat, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false)
 
+finds a peak in the Fourier transform of the input data `dat` by iteratively shifting and optimizing the peak strength.
+In detail this is achieved by exploiting the Parseval theorem to calculate the sum of squared differences in Fourier space.
+"""
 function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false) where{T,N}
     RT = real(T)
     win = collect(window_hanning(Float32, size(dat), border_in=0.0))
@@ -315,27 +327,195 @@ function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true,
         if !isnothing(max_range)
             lower = k_est .- max_range
             upper = k_est .+ max_range
-            @time optimize(od, lower, upper, k_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
+            optimize(od, lower, upper, k_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
         else
-            @time optimize(od, k_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
+            optimize(od, k_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
             # @time optimize(od, k_est, GradientDescent(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
             # @time optimize(mynorm2, g!, k_est, LBFGS(), Optim.Options(show_trace=true)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
         end
     end
     # Optim.minimizer(res), mynorm(Optim.minimizer(res))
-    res.minimizer
+    # @show res
+    k_res = res.minimizer
+    peak_cpx = sum_exp_shift(dat, k_res)
+    return k_res, angle(peak_cpx), abs.(peak_cpx) ./ length(dat)
+end
+
+"""
+    get_sin_fit_fg!(dat)
+
+returns an matching fg! function to be used in Optim for a sine function model.
+Parameters:
++ dat: The data to construct the function for
++ init_scale: a factor to ensure that the initial step length is small enough.
+
+"""
+function get_sin_fit_fg!(dat; init_scale=10)
+    N = length(dat)*init_scale
+    ctr = size(dat) .÷ 2 .+ 1
+    fscale = 2pi ./ size(dat)
+    freq_ax = [reorient((axes(dat)[d] .- ctr[d]).* fscale[d], Val(d)) for d in 1:ndims(dat)]
+    
+    function fg!(F, G, vec)
+        k = vec[1:end-2]
+        Φ = vec[end-1]
+        a = vec[end]
+        # use the complex-valued exponential function, since it is separable. 
+        # in the broadcasting operation the sine and cosine components are then separated.
+        myexp = exp_ikx_sep(size(dat), shift_by=k)
+        myexp.args[1] .*= exp.(1im * Φ) # a trick to incorporate the phase
+        resid = a .* imag.(myexp) .- dat
+        if G !== nothing
+            # code to compute gradient here
+            # grad k
+            # coskxphi is real.(myexp)
+            for d=1:length(k)
+                myaxis = freq_ax[d]
+                G[d] = .- 2*a*sum(resid .* real.(myexp) .* myaxis) / N
+            end
+            # grad Φ
+            G[end-1] = 2*a*sum(resid .* real.(myexp)) / N
+            # grad a
+            G[end] = 2*sum(resid .* imag.(myexp)) / N
+            # @show vec
+            # @show G
+        end
+        if F !== nothing
+            # value = ... code to compute objective function
+            return sum(abs2.(resid)) / N
+        end 
+    end
+    return fg!
+end
+
+# gradient-based fitting routine that fits a sine function to real-valued data
+"""
+    lsq_fit_sin(dat, k_init, phase_init=0f0, amp_init=1f0, exclude_zero=true)
+
+fits a (potentially non-commensurate) sine function to N-dimensional data using Optim.jl
+and a hard-coded model of the derivatives.
+
+Parameters:
++ dat: input data to fit amp * sin(k x + phase) to.
++ k_init: a preexisting estimate of the shift_by argument of the sine function. This relates to k via
+k = k_init .* 2pi ./ size(dat)
++ phase_init: the initial phase of the fit 
++ amp_init: the initial amplitude of the fit 
+"""
+function lsq_fit_sin(dat, k_init, phase_init=0f0, amp_init=1f0, exclude_zero=true)
+    fg! = get_sin_fit_fg!(dat)
+
+    init_vec = [(Float32.(k_init))..., phase_init, amp_init]
+    # @show init_vec
+    # @show fg!(1, nothing, init_vec)
+    res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=10))
+    print(res)
+    res = Optim.minimizer(res)
+    k_res = res[1:end-2]
+    phi_res = res[end-1]
+    a_res = res[end]
+    return k_res, phi_res, a_res
+end
+
+"""
+    get_exp_ikx_fit_fg!(dat; init_scale=10)
+
+returns an matching fg! function to be used in Optim for a exp_ikx function model.
+Parameters:
++ dat: The data to construct the function for
++ init_scale: a factor to ensure that the initial step length is small enough.
+"""
+function get_exp_ikx_fit_fg!(dat; init_scale=10)
+    N = length(dat)*init_scale
+    ctr = size(dat) .÷ 2 .+ 1
+    fscale = 2pi ./ size(dat)
+    freq_ax = [reorient((axes(dat)[d] .- ctr[d]).* fscale[d], Val(d)) for d in 1:ndims(dat)]
+    
+    function fg!(F, G, vec)
+        k = vec[1:end-2]
+        Φ = vec[end-1]
+        a = vec[end]
+        # use the complex-valued exponential function, since it is separable. 
+        # in the broadcasting operation the sine and cosine components are then separated.
+        myexp = exp_ikx_sep(size(dat), shift_by=k)
+        myexp.args[1] .*= exp.(1im * Φ) # a trick to incorporate the phase
+        resid = a .* myexp .- dat
+        # print(" loss: $(sum(abs2.(resid)) / N), k: $(k)\n")
+        if G !== nothing
+            # code to compute gradient here
+            # grad k
+            # coskxphi is real.(myexp)
+            for d=1:length(k)
+                myaxis = freq_ax[d]
+                G[d] = imag(.- 2*a*sum(resid .* conj.(myexp) .* myaxis) / N)
+            end
+            # grad Φ
+            G[end-1] = imag(2*a*sum(resid .* conj.(myexp))) / N
+            # grad a
+            G[end] = real(2*sum(resid .* conj.(myexp))) / N
+        end
+        if F !== nothing
+            # value = ... code to compute objective function
+            return sum(abs2.(resid)) / N
+        end 
+    end
+    return fg!
+end
+
+# gradient-based fitting routine that fits a sine function to real-valued data
+"""
+    lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0)
+
+fits a (potentially non-commensurate) exp_ikx function to N-dimensional data using Optim.jl
+and a hard-coded model of the derivatives.
+
+Parameters:
++ dat: input data to fit amp * sin(k x + phase) to.
++ k_init: a preexisting estimate of the shift_by argument of the sine function. This relates to k via
+k = k_init .* 2pi ./ size(dat)
++ phase_init: the initial phase of the fit 
++ amp_init: the initial amplitude of the fit 
+"""
+function lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0)
+    fg! = get_exp_ikx_fit_fg!(dat)
+
+    init_vec = [(Float32.(k_init))..., phase_init, amp_init]
+    # @show init_vec
+    # @show fg!(1, nothing, init_vec)
+    res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=10))
+    # print(res)
+    res = Optim.minimizer(res)
+    k_res = res[1:end-2]
+    phi_res = res[end-1]
+    a_res = res[end]
+    return k_res, phi_res, a_res
+end
+
+function get_pixel_peal_pos(fdat; interactive=false, overwrite=true, exclude_zero=true)
+    if interactive
+        pos = get_positions(fdat, overwrite=overwrite)
+        pos[1] .- (size(fdat).÷ 2 .+1)
+    else
+        find_max(abs2.(fdat), exclude_zero=exclude_zero)
+        # RT.(find_max(abs2.(fdat), exclude_zero=exclude_zero))
+    end
+
 end
 
 """
     find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
 
-localizes the peak in Fourier-space with sub-pixel accuracy using an iterative fitting routine.
+localizes the peak in Fourier-space with sub-pixel accuracy using various routines, some involving fitting.
+Returned is a tuple of vector of the peak position in Fourier-space as well as the phase and absolute amplitude of the peak.
 
 # Arguments
 + dat:  data
 + k_est: a starting value for the peak-position. Needs to be accurate enough such that a gradient-based search can be started with this value
         If `nothing` is provided, an FFT will be performed and a maximum is chosen. 
-+ method: defines which method to use for finding the maximum. Current options: `:FindZoomFT` or `:FindIter`
++ method: defines which method to use for finding the maximum. Current options:
+    `:FindZoomFT`:  Uses a chirp Z transformation to zoom into the peak. 
+    `:FindIter`:    Uses an iterative optimization via FFT-shift operations to find the peak.
+    `:FindWaveFit`: Uses a gradient-based fitting of a complex exponential to the input data to find the peak.
 + interactive: a boolean defining whether to use user-interaction to define the approximate peak position. Only used if `k_est` is `nothing`.
 + ignore_zero: if `true`, the zero position will be ignored. Only used if `!isnothing(k_est)`.
 + max_range: maximal search range for the iterative optimization to be used as a box-constraint for the `Optim` package.
@@ -344,27 +524,33 @@ localizes the peak in Fourier-space with sub-pixel accuracy using an iterative f
 + exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
 + scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
 """
-function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10, verbose=false) where{T,N}
+function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, correl_mask=nothing) where{T,N}
+    @show k_est
     fdat = ft(dat)
-    RT = real(T)
-    k_est = let
-        if isnothing(k_est)
-            if interactive
-                pos = get_positions(fdat, overwrite=overwrite)
-                pos[1] .- (size(dat).÷ 2 .+1)
-            else
-                RT.(find_max(abs2.(fdat), exclude_zero=exclude_zero))
-            end
-        else
-            k_est
-        end
+    if !isnothing(correl_mask)
+        fdat = fdat .* correl_mask
+        @show size(fdat)
     end
-    k_est = [k_est...]
+    # RT = real(T)
+    if isnothing(k_est)
+        k_est = get_pixel_peal_pos(fdat, interactive=interactive, overwrite=overwrite, exclude_zero=exclude_zero)
+    end
+    @show k_est
+    # @show k_est
+    # k_est = [k_est...]
     if method == :FindZoomFT
-        k_est = Tuple(round.(Int, k_est))
+        # k_est = Tuple(round.(Int, k_est))
         return get_subpixel_peak(fdat, k_est, scale=scale, exclude_zero=exclude_zero, abs_first=abs_first, roi_size=roi_size)
     elseif method == :FindIter
         return find_ft_iter(dat, k_est; exclude_zero=exclude_zero, max_range=max_range, verbose=verbose);
+    elseif method == :FindWaveFit
+        k_pos = round.(Int, k_est) .+ size(fdat) .÷ 2 .+ 1
+        val = fdat[k_pos...]
+        phase_init = angle(val)
+        amp_init = abs(val) / length(dat)
+        res = lsq_fit_exp_ikx(dat, .-k_est, phase_init, amp_init);
+        res[1] .= .- res[1]
+        return res # return the full information
     else
         error("Unknown method for localizing peak. Use :FindZoomFT or :FindIter")
     end
@@ -431,7 +617,8 @@ function align_stack(dat::AbstractArray{T,N}; refno=nothing, ref = nothing, damp
         myshift = let 
             if isnothing(shifts)
                 cor_ft = ft(wh .* (aslice .- mean(aslice))) .* fref
-                find_ft_peak(cor_ft, method=method, interactive=false)
+                sh, pha, am = find_ft_peak(cor_ft, method=method, interactive=false)
+                sh
             else
                 shifts[n]
             end
@@ -461,9 +648,9 @@ function all_correl_strengths(k_cur, dat, other=dat)
     sum(abs.(correl_at(k_cur, dat, other)))  # sum of all correlations
 end
 
-function optim_correl(dat, other=dat; k_est = nothing, method=:FindZoomFT, verbose=false)
+function optim_correl(dat, other=dat; k_est = nothing, method=:FindZoomFT, verbose=false, correl_mask=nothing)
     if true
-        find_ft_peak(dat .* conj.(other), method=method, verbose=verbose)
+        find_ft_peak(dat .* conj.(other), method=method, verbose=verbose, correl_mask=correl_mask)
     else # old version below
         mynorm(x) = - all_correl_strengths(x, dat, other)
         #@show k_est
@@ -489,7 +676,7 @@ This is needed since the correlation can extend twice as far.
 To correlate the Fourier transforms of real-valued data, just supply the real-space data as `dat`.
 """
 function prepare_correlation(dat; upsample=true, other=nothing, psf=nothing)
-    up = zeros(size(dat,1)*2,size(dat,2)*2,size(dat,3))
+    up = zeros(size(dat,1)*2, size(dat,2)*2, size(dat,3))
     dat = let
     if !isnothing(psf)
         conv_psf(dat, psf)
@@ -498,9 +685,9 @@ function prepare_correlation(dat; upsample=true, other=nothing, psf=nothing)
     end
     end
     if upsample
-    for n=1:size(dat,3)
-        up[:,:,n] .= upsample2(dat[:,:,n])
-    end
+        for n=1:size(dat,3)
+            up[:,:,n] .= upsample2(dat[:,:,n])
+        end
     else
         up = dat
     end
@@ -509,7 +696,7 @@ function prepare_correlation(dat; upsample=true, other=nothing, psf=nothing)
             up
         else
             other = let
-                if false # !isnothing(psf)
+                if !isnothing(psf) # false # 
                     conv_psf(other, psf)
                 else
                     other
@@ -552,45 +739,80 @@ end
 
 # now we try to find the subpixel position using a chirped z-transform
 
-function get_subpixel_patch(cor::AbstractArray{T,N}, p_est; scale=10, roi_size=4) where{T,N}
+function get_subpixel_patch(cor::AbstractArray{T,N}, p_est; scale=10, roi_size=5) where{T,N}
+    if !(any(isinteger.(scale)))
+        error("Scale needs to be an integer.")
+    end
     RT = real(T)
+    scale = Tuple(scale .* ones(Int, ndims(cor)))
     p_mid = size(cor).÷2 .+ 1
-    new_size = min.(roi_size .* scale, size(cor))
-    roi = select_region(cor,center=p_mid.+p_est,new_size=new_size)  # (iczt(fc .* exp_ikx(size(cor)[1:2], shift_by=.-p_est), scale)
+
+    # determine the size to extract from cor
+    new_size = ceil.(Int, roi_size .* scale) # , size(cor))
+
+    # 2 .* scale .* ones(Int, ndims(cor)))))
+    # if length(roi_size) < 2
+    #     @show new_size = Tuple(roi_size .* scale for n in 1:ndims(cor))
+    # else
+    #     @show new_size = roi_size .* scale
+    # end
+
+    roi = select_region(cor, center=p_mid.+p_est, new_size=new_size)  # (iczt(fc .* exp_ikx(size(cor)[1:2], shift_by=.-p_est), scale)
+    # @show scale = size(cor) ./ new_size
     # return roi
     fc = ft2d(roi .* window_hanning(Float32, size(roi), border_in=0.0))
     # fc = ft2d(roi)
-    scale = scale .* ones(RT, ndims(cor))
-    roi = iczt(fc, scale, (1,2))
-    return roi
+    zoomed = iczt(fc, Float32.((scale[1:2]..., 1)), (1, 2))
+    return zoomed
 end
 
+"""
+    get_subpixel_peak(cor::AbstractArray{T,N}, p_est=nothing; exclude_zero=true, scale=10, roi_size=4, abs_first=false, dim=3) where{T,N}
+
+obtains the subpixel peak position of the correlation `cor` with an initial estimate `p_est` using a chirped z-transform.
+"""
 function get_subpixel_peak(cor::AbstractArray{T,N}, p_est=nothing; exclude_zero=true, scale=10, roi_size=4, abs_first=false, dim=3) where{T,N}
     p_est = let
         if isnothing(p_est)
-            find_max(cor, exclude_zero=exclude_zero)
+            find_max(abs2.(cor), exclude_zero=exclude_zero)
         else
             p_est
         end
     end
     # @show roi_size
-    roi = let
-        if abs_first 
-            get_subpixel_patch(sum(abs.(cor), dims=dim), p_est, scale=scale, roi_size=roi_size)
-        else
-            sum(abs.(get_subpixel_patch(cor, p_est, scale=scale, roi_size=roi_size)), dims=dim)
-        end
+    roi = get_subpixel_patch(cor, p_est, scale=scale, roi_size=roi_size)
+    if abs_first 
+            roi = get_subpixel_patch(sum(abs.(cor), dims=dim), p_est, scale=scale, roi_size=roi_size)
+        # else
+        #     sum(abs.(get_subpixel_patch(cor, p_est, scale=scale, roi_size=roi_size)), dims=dim)
+        # end
     end
+    # @show abs.(roi)
     # return roi
-    m,p = findmax(abs.(roi))
+    m,p = findmax(abs2.(roi))
+    peak_val = roi[p]
     roi_mid = (size(roi).÷2 .+ 1)
-    return p_est .+ ((Tuple(p) .- roi_mid) ./ scale)
+    return [(p_est .+ ((Tuple(p) .- roi_mid) ./ scale))...], angle(peak_val), abs(peak_val) ./ length(cor)
 end
 
+"""
+    get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsample=true)
 
-function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsample=true)
+returns the subpixel correlation of `dat` with `other` or by default with itself.
+
+# Arguments
++ `dat`: the data to correlate
++ `other`: the reference data to correlate with. If `nothing` the data is correlated with itself.
++ `k_est`: an initial estimate of the shift. If `nothing` the shift is determined via a cross-correlation.
++ `psf`: the point spread function to use for prefiltering the data to correlate. If `nothing` no prefiltering is performed.
+    Prefiltering can be useful to reduce noise and also uncorrelated background (if `psf` suppresses low frequencies).
++ `upsample`: if `true` the data is upsampled by a factor of two before correlation. This is necessary to avoid wrap-around effects.
+
+returns the subpixel position of the correlation peak and the phase and amplitude of the peak.
+"""
+function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsample=true, correl_mask=nothing)
     up, up_other = prepare_correlation(dat; upsample=upsample, other=other, psf=psf)    
-    optim_correl(up, up_other, k_est=k_est)
+    optim_correl(up, up_other, k_est=k_est, correl_mask=correl_mask)
 end
 
 

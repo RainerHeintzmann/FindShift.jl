@@ -24,7 +24,8 @@ export fourier_mellin, fourier_mellin_align
 export find_deformations, align_images
 export extract_sub_images, replace_nan
 export inpaint # see also the code in FourierTools for the version without mask
-export find_pos, stitch, apply_warp
+export find_pos, stitch, apply_warp, get_subpixel_correl
+
 # export find_rel_pos, inpaint_imgs, minimize_distances, limit_strain!, get_strain, get_lin_idx, direction_tuple, set_border!, is_mask_array, get_dt_weights
 
 include("utils.jl")

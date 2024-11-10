@@ -58,7 +58,12 @@ end
     return Z, exp_shift_dat_pullback
 end
 
+"""
+    sum_exp_shift(dat, k_0)
 
+returns the scalar product of a complex array `dat` with a complex exponential wave with wave vector `k_0`. The calculation is done wihtout a Fourier transform
+and exploiting the separability of the exponential function.
+"""
 function sum_exp_shift(dat, k_0)
     sz = size(dat)
     # mymid = (sz.÷2).+1
