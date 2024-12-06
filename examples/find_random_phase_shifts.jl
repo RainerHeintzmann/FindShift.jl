@@ -45,7 +45,8 @@ function main()
     k0 = (1.4,0.1)  # just about visible (42% overlap)
     k0 = (1.6,0.1)  # still visible (34% overlap)
     k0 = (1.8,0.1)  # barely visible (26% overlap)
-    truth = k0 .* size(cim) ./ 4 ./ pi
+    cimsize = size(obj) .* 2
+    truth = k0 .* cimsize ./ 4 ./ pi
     overlap = (4*rmax - norm(truth)) / (4*rmax)
     # k0 = (0.7, 1.4)
     phase = 0.0 # 2 .*pi.*rand(1,1,10)
@@ -90,9 +91,9 @@ function main()
     #@vv get_subpixel_patch(cc, k_est, scale=(40,40))
     
     # res = get_subpixel_peak(cim, scale=(40,40), abs_first=true)
-    p =find_ft_peak(cim, method=:FindIter, overwrite=true)
-    @show truth
-    @show p
+    p = find_ft_peak(cim, method=:FindIter, overwrite=true)
+    # @show truth
+    # @show p
     # p =find_ft_peak(ft(cc),[0.3,115.0])
 
     # res = get_subpixel_peak(cim,(0,0), scale=(10,10))

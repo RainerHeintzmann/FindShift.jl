@@ -310,7 +310,7 @@ function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true,
     #@show typeof(k_est)
     #@show mygrad(k_est)
     function g!(G, x)  # (G, x)
-        G .= Zygote.gradient(mynorm2,x)[1]
+        G .= Zygote.gradient(mynorm2, x)[1]
     end
     # x = -1:0.1:1; plot(x,[mynorm2(k_est .+ [0,p]) for p in x]); plot!(x,[mynorm2(k_est .+ [p,0]) for p=-1:0.1:1])
     # plot(x,[gradient(mynorm2,(k_est .+ [0,p]))[1][2] for p in x]); plot!(x,[gradient(mynorm2,(k_est .+ [p,0]))[1][1] for p in x])
@@ -491,10 +491,12 @@ function lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0)
     return k_res, phi_res, a_res
 end
 
-function get_pixel_peal_pos(fdat; interactive=false, overwrite=true, exclude_zero=true)
+function get_pixel_peak_pos(fdat; interactive=false, overwrite=true, exclude_zero=true)
     if interactive
         pos = get_positions(fdat, overwrite=overwrite)
-        pos[1] .- (size(fdat).÷ 2 .+1)
+        pos = (round.(Int, (pos[1] .- (size(fdat).÷ 2 .+1)))...,)
+        # pos = find_max(abs2.(fdat), exclude_zero=exclude_zero)
+        pos
     else
         find_max(abs2.(fdat), exclude_zero=exclude_zero)
         # RT.(find_max(abs2.(fdat), exclude_zero=exclude_zero))
@@ -503,13 +505,13 @@ function get_pixel_peal_pos(fdat; interactive=false, overwrite=true, exclude_zer
 end
 
 """
-    find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10)
+    find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10, ft_mask=nothing)
 
 localizes the peak in Fourier-space with sub-pixel accuracy using various routines, some involving fitting.
 Returned is a tuple of vector of the peak position in Fourier-space as well as the phase and absolute amplitude of the peak.
 
 # Arguments
-+ dat:  data
++ dat:  data in real space, which will be Fourier transformed
 + k_est: a starting value for the peak-position. Needs to be accurate enough such that a gradient-based search can be started with this value
         If `nothing` is provided, an FFT will be performed and a maximum is chosen. 
 + method: defines which method to use for finding the maximum. Current options:
@@ -523,19 +525,20 @@ Returned is a tuple of vector of the peak position in Fourier-space as well as t
 + max_range: maximal search range to look for in the +/- direction. Default: `nothing`, which does not restrict the local search range.
 + exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
 + scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
++ ft_mask: a mask to multiply to the Fourier-transformed function. This can be used to mask out certain regions in the correlation function.
 """
-function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, correl_mask=nothing) where{T,N}
-    @show k_est
+function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing) where{T,N}
+    # @show k_est
     fdat = ft(dat)
-    if !isnothing(correl_mask)
-        fdat = fdat .* correl_mask
-        @show size(fdat)
+    if !isnothing(ft_mask)
+        fdat = fdat .* ft_mask
+        # @show size(fdat)
     end
     # RT = real(T)
     if isnothing(k_est)
-        k_est = get_pixel_peal_pos(fdat, interactive=interactive, overwrite=overwrite, exclude_zero=exclude_zero)
+        k_est = get_pixel_peak_pos(fdat, interactive=interactive, overwrite=overwrite, exclude_zero=exclude_zero)
     end
-    @show k_est
+    # @show k_est
     # @show k_est
     # k_est = [k_est...]
     if method == :FindZoomFT
@@ -648,9 +651,34 @@ function all_correl_strengths(k_cur, dat, other=dat)
     sum(abs.(correl_at(k_cur, dat, other)))  # sum of all correlations
 end
 
-function optim_correl(dat, other=dat; k_est = nothing, method=:FindZoomFT, verbose=false, correl_mask=nothing)
+"""
+    optim_correl(dat, other=dat; k_est = nothing, method=:FindZoomFT, verbose=false, correl_mask=nothing)
+
+optimizes the correlation of Fourier-transformed `dat` with `other` by maximizing the correlation strength.
+Note that you should probably be using "get_subpixel_correl" instead, which accepts real-space data and preprocesses it.
+
+# Arguments
++ dat: the data already in Fourier space to correlate (using one additional Fourier transformation)
++ other: the reference data to correlate with, as a default the data is autocorrelated.
++ k_est: an initial estimate of the shift
++ method: the method to use for finding the peak
++ verbose: if `true` the optimization process is printed
++ correl_mask: a mask to apply to the correlation to restrict the search space
+
+Returned is the optimal shift and the correlation strength and phase at this shift.
+
+# Example
+```julia
+julia> dat = rand(100,100);
+
+julia> simg = shift(dat, (3.3, 4.45));
+
+julia> optim_correl(simg, dat)
+```
+"""
+function optim_correl(dat, other=dat; k_est = nothing, interactive=false, method=:FindZoomFT, verbose=false, correl_mask=nothing)
     if true
-        find_ft_peak(dat .* conj.(other), method=method, verbose=verbose, correl_mask=correl_mask)
+        find_ft_peak(dat .* conj.(other), method=method, verbose=verbose, ft_mask=correl_mask, interactive=interactive)
     else # old version below
         mynorm(x) = - all_correl_strengths(x, dat, other)
         #@show k_est
@@ -762,7 +790,9 @@ function get_subpixel_patch(cor::AbstractArray{T,N}, p_est; scale=10, roi_size=5
     # return roi
     fc = ft2d(roi .* window_hanning(Float32, size(roi), border_in=0.0))
     # fc = ft2d(roi)
-    zoomed = iczt(fc, Float32.((scale[1:2]..., 1)), (1, 2))
+    # fc = expand_dims(fc, Val(3))
+    scale_mod = Tuple(ifelse((d<3), Float32(scale[d]), 1f0) for d in 1:length(scale))
+    zoomed = iczt(fc, scale_mod, (1, 2))
     return zoomed
 end
 
@@ -810,9 +840,9 @@ returns the subpixel correlation of `dat` with `other` or by default with itself
 
 returns the subpixel position of the correlation peak and the phase and amplitude of the peak.
 """
-function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsample=true, correl_mask=nothing)
-    up, up_other = prepare_correlation(dat; upsample=upsample, other=other, psf=psf)    
-    optim_correl(up, up_other, k_est=k_est, correl_mask=correl_mask)
+function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsample=true, interactive=false, correl_mask=nothing)
+    up, up_other = prepare_correlation(dat; upsample=upsample, other=other, psf=psf)
+    return optim_correl(up, up_other, k_est=k_est, correl_mask=correl_mask, interactive=interactive)
 end
 
 

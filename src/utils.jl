@@ -114,21 +114,25 @@ end
 
 """
     sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
-    a helper function for the gradient of a sum over an exponential
+    a helper function for the gradient of a sum over a complex exponential wave.
 """
 function sum_res_i(dat::Array{T,D}, pvec::Array{T2,1}) where {T,T2,D}
     sz = size(dat)
     mymid = (sz.÷2).+1
+    # exp(i k x)
     f = (p, sz, pvec) -> cis(pvec * p)
     # s1 = sum(conj.(dat) .* separable_view(f, sz, pvec))
+    #@show pvec
     f_sep = calculate_separables(Array{T,D}, f, sz, pvec)
     s1 = sum(conj.(dat) .* (f_sep...))
+    #@show s1
 
     times_pos(p,d) = (p .-mymid) .* d
     g = (p, sz, pvec) -> cis(- pvec * p)
     # s2 = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), dat .* separable_view(g, sz, pvec)))
     f_sep2 = calculate_separables(Array{T,D}, g, sz, pvec)
     s2 = sum_t(apply_tuple_list.(times_pos, Tuple.(CartesianIndices(sz)), dat .* (f_sep2...)))
+    #@show imag.(s1 .* s2)
     imag.(s1 .* s2)  # t_imag
 end
 

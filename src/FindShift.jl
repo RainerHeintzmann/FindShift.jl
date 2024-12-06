@@ -16,6 +16,7 @@ using StaticArrays # for fast arrays
 # using PSFDistiller # currently needed for gaussf
 using SeparableFunctions
 using ImageMorphology # for distance-transform based weighting and erosion of masks
+using View5D # for the interactive subpixel peak finder we need get_positions
 
 export abs2_ft_peak, sum_exp_shift, find_ft_peak, correlate, beautify, get_subpixel_peak, align_stack, optim_correl
 export find_shift, find_shift_iter, shift_cut, separable_view, arg_n

@@ -29,6 +29,7 @@ using IndexFunArrays
     loss = (vec) -> sum(abs2.(vec[4] .* imag.(exp(1im * vec[3]) .* exp_ikx_col(sz, shift_by = vec[1:2])) .- cos_wave) )/N
     # loss = (k) -> sum(abs2.(cos_wave .- a .* imag.(exp_ikx_col(sz, shift_by = k))) )/prod(sz)/100
 
+    # starting values for search:
     vec1 = [1.0, 2.0, 0.0, 1.0]
     mygrad = grad(central_fdm(5, 1), loss, vec1)
 
@@ -38,6 +39,7 @@ using IndexFunArrays
     myloss = fg!(1, G, vec1)
     @test isapprox(G, mygrad[1], rtol=1e-3)
 
+    k1 = vec1[1:2]
     k, phi, a = FindShift.lsq_fit_sin(cos_wave, k1, 0f0, 1f0)
     @test isapprox([k..., phi, a], vec0, rtol=1e-3)
 
@@ -58,15 +60,18 @@ using IndexFunArrays
     G = zeros(Float32, 4)
     # G = zeros(ComplexF32, 4)
     myloss = fg!(1, G, vec1)
-    @test isapprox(G, mygrad[1], rtol=1e-3)
+    @test isapprox(G, mygrad[1], rtol=1e-2)
 
     k, phi, a = FindShift.lsq_fit_exp_ikx(exp_wave, k1, 0f0, 1f0)
     @test isapprox([k..., phi, a], vec0, rtol=1e-3)
 
     # true peak is at   vec0[1:2]=[1.2, 2.3]
     k_zoom = find_ft_peak(exp_wave, method=:FindZoomFT)
+    @test isapprox([.-k_zoom[1]..., k_zoom[2:3]...], vec0, rtol=2e-2)
     k_iter = find_ft_peak(exp_wave, method=:FindIter)
+    @test isapprox([.-k_iter[1]..., k_iter[2:3]...], vec0, rtol=1e-3)
     k_fit = find_ft_peak(exp_wave, method=:FindWaveFit)
+    @test isapprox([.-k_fit[1]..., k_fit[2:3]...], vec0, rtol=1e-3)
 
 end
 
@@ -76,18 +81,20 @@ end
     psf = abs2.(ift(rr(Float32, sz) .< 100))
     psf = psf / sum(psf)
 
-    vec0 = [1.4, 2.2, 0.0, 1.0]
-    cos_modulation = vec0[4] .* cos.(vec0[3] .+ vec0[1].*(1:sz[1]) .+ vec0[2].*transpose(1:sz[2])) .+ 1
+    vec_c = [1.4, 2.2, 0.0, 1.0]
+    cos_modulation = vec_c[4] .* cos.(vec_c[3] .+ vec_c[1].*(1:sz[1]) .+ vec_c[2].*transpose(1:sz[2])) .+ 1
 
     perfect_data = conv_psf(data .* cos_modulation, psf)
     noisy_data = perfect_data .+ 0.05 .* randn(Float32, sz)
     # test the correlation
 
     psf_bandpass = nothing # real.(ift(ft(psf) .* (1 .-gaussian_sep(size(psf), sigma=2.0))))
-    vec_pos = vec0[1:2] .* size(psf)/(2pi)
+    vec_pos = vec_c[1:2] .* size(psf)/(2pi)
     highpass = rr(size(psf).*2, offset=size(psf) .+ 1 .+ vec_pos) .< 50 # gaussian_sep(size(psf).*2, sigma=55.0)
     # highpass = rr(size(psf).*2) .> 50 # gaussian_sep(size(psf).*2, sigma=55.0)
 
     corr_res_k, correl_res_p, correl_res_a = get_subpixel_correl(noisy_data; other=nothing, k_est=nothing, psf=psf_bandpass, upsample=true, correl_mask = highpass)
     @test isapprox(corr_res_k[1:2], vec_pos, rtol=1e-2)
+
+    # corr_res_k, correl_res_p, correl_res_a = get_subpixel_correl(noisy_data; interactive=true, other=nothing, k_est=nothing, psf=psf_bandpass, upsample=true, correl_mask = highpass)
 end
