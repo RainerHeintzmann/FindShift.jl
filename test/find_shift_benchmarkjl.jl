@@ -4,6 +4,7 @@ using FiniteDifferences
 
 # benchmark
 sz = (128, 128)  
+sz = (2048, 2048)  
 vec0 = ([11.2, 14.3], 0.3, 1.0)
 
 exp_wave = vec0[3] .* exp(1im*vec0[2]) .* exp_ikx_col(sz, shift_by = .-vec0[1])
