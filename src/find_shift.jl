@@ -539,21 +539,28 @@ Returned is a tuple of vector of the peak position in Fourier-space as well as t
 """
 function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing) where{T,N}
     # @show k_est
-    fdat = nothing
-    if !isnothing(ft_mask)
-        fdat = fdat .* ft_mask
-        # @show size(fdat)
-    end
+    # fdat = nothing
     # RT = real(T)
-    if isnothing(k_est)
-        if isnothing(fdat)
+    #if isnothing(fdat)
+    fdat = let
+        if (method != :FindPhase || isnothing(k_est ))
             fdat = ft(dat)
+            if !isnothing(ft_mask)
+                fdat = fdat .* ft_mask
+                # @show size(fdat)
+            end
+            fdat
+        else
+            nothing
         end
+    end
+    #end
+    if isnothing(k_est)
         k_est = get_pixel_peak_pos(fdat, interactive=interactive, overwrite=overwrite, exclude_zero=exclude_zero)
     end
 
-    @show k_est
-    if isa(k_est[1], AbstractArray) || isa(k_est[1], Tuple)
+    # @show k_est
+    if isa(k_est[1], AbstractArray) || isa(k_est[1], Tuple) # Array of positions
         res_k = []
         res_phase = []
         res_int = []
@@ -584,7 +591,7 @@ function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_
     elseif method == :FindIter
         k_est = Tuple(round.(Int, k_est))
         return find_ft_iter(dat, k_est; exclude_zero=exclude_zero, max_range=max_range, verbose=verbose);
-    elseif method == :FindWaveFit
+    elseif method == :FindWaveFit # does not ned fdat
         k_est = Tuple(round.(Int, k_est))
         k_pos = round.(Int, k_est) .+ size(fdat) .÷ 2 .+ 1
         if isnothing(fdat)
@@ -594,6 +601,8 @@ function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_
         phase_init = angle(val)
         amp_init = abs(val) / length(dat)
         res = lsq_fit_exp_ikx(dat, .-k_est, phase_init, amp_init);
+        @show typeof(fdat)
+        @show typeof(res)
         res[1] .= .- res[1]
         return res # return the full information
     elseif method == :FindPhase
@@ -752,7 +761,6 @@ This is needed since the correlation can extend twice as far.
 To correlate the Fourier transforms of real-valued data, just supply the real-space data as `dat`.
 """
 function prepare_correlation(dat; upsample=true, other=nothing, psf=nothing)
-    up = zeros(size(dat,1)*2, size(dat,2)*2, size(dat,3))
     dat = let
     if !isnothing(psf)
         conv_psf(dat, psf)
@@ -761,9 +769,10 @@ function prepare_correlation(dat; upsample=true, other=nothing, psf=nothing)
     end
     end
     if upsample
-        for n=1:size(dat,3)
-            up[:,:,n] .= upsample2(dat[:,:,n])
-        end
+            up = zeros(size(dat,1)*2, size(dat,2)*2, size(dat,3))
+            for n=1:size(dat,3)
+                up[:,:,n] .= upsample2(dat[:,:,n])
+            end
     else
         up = dat
     end
@@ -778,8 +787,8 @@ function prepare_correlation(dat; upsample=true, other=nothing, psf=nothing)
                     other
                 end
             end
-            up2 = zeros(size(other,1)*2,size(other,2)*2,size(other,3))
             if upsample
+                up2 = zeros(size(other,1)*2,size(other,2)*2,size(other,3))
                 for n=1:size(other,3)
                     up2[:,:,n] .= upsample2(other[:,:,n])
                 end
@@ -819,12 +828,12 @@ function get_subpixel_patch(cor::AbstractArray{T,N}, p_est; scale=10, roi_size=5
     if !(any(isinteger.(scale)))
         error("Scale needs to be an integer.")
     end
-    RT = real(T)
     scale = Tuple(scale .* ones(Int, ndims(cor)))
     p_mid = size(cor).÷2 .+ 1
 
     # determine the size to extract from cor
-    new_size = ceil.(Int, roi_size .* scale) # , size(cor))
+    # new_size = ceil.(Int, roi_size .* scale) # , size(cor))
+    new_size = ntuple(d -> ifelse(size(cor,d) == 1, 1, ceil.(Int, roi_size .* scale[d])),  Val(ndims(cor)))
 
     # 2 .* scale .* ones(Int, ndims(cor)))))
     # if length(roi_size) < 2
@@ -858,12 +867,15 @@ function get_subpixel_peak(cor::AbstractArray{T,N}, p_est=nothing; exclude_zero=
         end
     end
     # @show roi_size
-    roi = get_subpixel_patch(cor, p_est, scale=scale, roi_size=roi_size)
-    if abs_first 
-            roi = get_subpixel_patch(sum(abs.(cor), dims=dim), p_est, scale=scale, roi_size=roi_size)
-        # else
-        #     sum(abs.(get_subpixel_patch(cor, p_est, scale=scale, roi_size=roi_size)), dims=dim)
-        # end
+    roi = let
+        if abs_first 
+            get_subpixel_patch(sum(abs.(cor), dims=dim), p_est, scale=scale, roi_size=roi_size)
+        else
+            get_subpixel_patch(cor, p_est, scale=scale, roi_size=roi_size)
+                # else
+            #     sum(abs.(get_subpixel_patch(cor, p_est, scale=scale, roi_size=roi_size)), dims=dim)
+            # end
+        end
     end
     # @show abs.(roi)
     # return roi
@@ -879,7 +891,7 @@ end
 returns the subpixel correlation of `dat` with `other` or by default with itself.
 
 # Arguments
-+ `dat`: the data to correlate
++ `dat`: the data to correlate with itself or `other` in (inverse) Fourier space. This is the real space data when correlating FT orders. 
 + `other`: the reference data to correlate with. If `nothing` the data is correlated with itself.
 + `k_est`: an initial estimate of the shift. If `nothing` the shift is determined via a cross-correlation.
 + `psf`: the point spread function to use for prefiltering the data to correlate. If `nothing` no prefiltering is performed.
@@ -888,10 +900,19 @@ returns the subpixel correlation of `dat` with `other` or by default with itself
 
 returns the subpixel position of the correlation peak and the phase and amplitude of the peak.
 """
-function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false)
+function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6)
     up, up_other = prepare_correlation(dat; upsample=upsample, other=other, psf=psf)
     # return optim_correl(up, up_other, k_est=k_est, correl_mask=correl_mask, interactive=interactive, method=method)
-    return find_ft_peak(up .* conj.(up_other), k_est, method=method, verbose=verbose, ft_mask=correl_mask, interactive=interactive)
+
+    fourier_weigths = nothing
+    if !isnothing(psf)
+        fourier_weigths = ft(abs2.(psf))
+        fourier_weigths = conj.(fourier_weigths)./(abs2.(fourier_weigths) .+ reg_param)
+        if !isnothing(correl_mask)
+            fourier_weigths .= fourier_weigths .* correl_mask
+        end
+    end
+    return find_ft_peak(up .* conj.(up_other), k_est, method=method, verbose=verbose, ft_mask=fourier_weigths, interactive=interactive)
 end
 
 
