@@ -542,51 +542,37 @@ function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT
     # fdat = nothing
     # RT = real(T)
     #if isnothing(fdat)
-    fdat = let # :FindPhase does not need the fft
-        if (method != :FindPhase || isnothing(k_est ))
-            if !isnothing(psf)
-                fourier_weigths = ft(abs2.(psf))
-                fourier_weigths = conj.(fourier_weigths)./(abs2.(fourier_weigths) .+ reg_param)
-                if !isnothing(ft_mask)
-                    ft_mask .= fourier_weigths .* correl_mask
-                end
-            end
-            fdat = ft(dat)
-            if !isnothing(ft_mask)
-                fdat = fdat .* ft_mask
-                # @show size(fdat)
-            end
-            fdat
-        else
-            nothing
+    if !isnothing(psf)
+        fourier_weigths = ft(abs2.(psf))
+        fourier_weigths = conj.(fourier_weigths)./(abs2.(fourier_weigths) .+ reg_param)
+        if !isnothing(ft_mask)
+            ft_mask .= fourier_weigths .* correl_mask
         end
     end
+    fdat = ft(dat)
+    if !isnothing(ft_mask)
+        fdat = fdat .* ft_mask
+        # @show size(fdat)
+    end
+
     #end
     if isnothing(k_est)
         k_est = get_pixel_peak_pos(fdat, interactive=interactive, overwrite=overwrite, exclude_zero=exclude_zero)
     end
 
-    # @show k_est
-    psf2 = let
-        if (method == :FindPhase && !isnothing(psf))
-            abs2.(psf)
-        else
-            nothing
-        end
-    end
     if isa(k_est[1], AbstractArray) || isa(k_est[1], Tuple) # Array of positions
         res_k = []
         res_phase = []
         res_int = []
         for k in k_est
-            res = find_peak(dat, fdat, k; method=method, psf2=psf2, exclude_zero=exclude_zero, max_range=max_range, scale=scale, abs_first=abs_first, roi_size=roi_size, verbose=verbose);
+            res = find_peak(dat, fdat, k; method=method, exclude_zero=exclude_zero, max_range=max_range, scale=scale, abs_first=abs_first, roi_size=roi_size, verbose=verbose);
             push!(res_k, res[1])
             push!(res_phase, res[2])
             push!(res_int, res[3])
         end
         return res_k, res_phase, res_int
     else
-        return find_peak(dat, fdat, k_est; method=method, psf2=psf2, exclude_zero=exclude_zero, max_range=max_range, scale=scale, abs_first=abs_first, roi_size=roi_size, verbose=verbose)
+        return find_peak(dat, fdat, k_est; method=method, exclude_zero=exclude_zero, max_range=max_range, scale=scale, abs_first=abs_first, roi_size=roi_size, verbose=verbose)
     end
 
     # @show k_est
@@ -594,7 +580,7 @@ function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT
     # k_est = [k_est...]
 end
 
-function find_peak(dat, fdat, k_est; method=:FindZoomFT, psf2=nothing, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false)
+function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false)
     if method == :FindZoomFT
         # k_est = Tuple(round.(Int, k_est))
         if isnothing(fdat)
@@ -619,21 +605,6 @@ function find_peak(dat, fdat, k_est; method=:FindZoomFT, psf2=nothing, exclude_z
         # @show typeof(res)
         res[1] .= .- res[1]
         return res # return the full information
-    elseif method == :FindPhase
-        # no need for fdat
-        myexp = exp_ikx_sep(size(dat), shift_by=k_est)
-        @show k_est
-        sum_dat_exp = sum(dat .* myexp)
-        @show sum_dat_exp
-        # if !isnothing(psf2) # If psf2, the square of the psf is provided, we need to calculate this integral to account for the loss in correlation due to reduced overlap
-        #     Eps = sum(psf2)/ 1e8 # length(dat) /  1e-10
-        #     factor = 1 / (sum(psf2 .* myexp) + Eps) # / length(dat)
-        #     @show "factor $(factor)"
-        #     sum_dat_exp = sum_dat_exp .* factor
-        # end
-        phase = angle(sum_dat_exp) # sum(dat .* conj.(myexp))
-        amp = abs(sum_dat_exp) / length(dat)
-        return k_est, phase, amp
     else
         error("Unknown method for localizing peak. Use :FindZoomFT or :FindIter")
     end
@@ -924,11 +895,12 @@ function get_rel_subpixel_correl(ft_order0, ft_shifted_order, kshift::NTuple, fw
     return sum_shifted_order_exp / sum_order0_exp
 end
 
-function get_rel_subpixel_correl(dat, other, shift_vecs::Vector{Tuple}, psf; upsample=true)
+function get_rel_subpixel_correl(dat, other, shift_vecs::Vector, psf; upsample=true)
     res = []
     for k in shift_vecs
         push!(res, get_rel_subpixel_correl(dat, other, k, psf; upsample=upsample))
     end
+    return res
 end
 
 """
@@ -947,28 +919,11 @@ returns the subpixel correlation of `dat` with `other` or by default with itself
 
 returns the subpixel position of the correlation peak and the phase and amplitude of the peak.
 """
-function get_subpixel_correl(dat;  other=dat, k_est=nothing, k_other_psf_shift=nothing, psf=nothing, other_psf = psf, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6)
-    psf, other_psf = let 
-        if !isnothing(k_other_psf_shift)
-            myexp = exp_ikx_sep(size(other), shift_by=k_other_psf_shift)
-            psf, other_psf .* myexp
-        else
-            psf, psf
-        end
-    end
+function get_subpixel_correl(dat;  other=dat, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6)
     up = prepare_correlation(dat, psf; upsample=upsample)
-    up_other = prepare_correlation(other, other_psf; upsample=upsample)
-    # up # autocorrelate
+    up_other = prepare_correlation(other, psf; upsample=upsample)
 
     ftcorrel = up .* conj.(up_other)
-    # ctrpos = size(ftcorrel) .÷ 2 .+ 1
-    # ftcorrel[ctrpos...] = zero(eltype(ftcorrel)) # ensures that both arrays are zero mean for correlation
-
-    # if !isnothing(psf)
-    #     psf = copy(psf)
-    #     ctrpos = size(psf) .÷ 2 .+ 1
-    #     psf[ctrpos...] = zero(eltype(psf))
-    # end
     return find_ft_peak(ftcorrel, k_est; method=method, psf=psf, verbose=verbose, ft_mask=correl_mask, interactive=interactive, reg_param=reg_param)
 end
 

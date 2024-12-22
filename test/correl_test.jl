@@ -36,23 +36,10 @@ img_sub = img .- wf
 @vt img img_sub
 @vt ft(img) ft(img_sub)
 
-# rec_psf = collect(delta(sz))
-rec_psf = mypsf
-# rec_psf = asf
-res = find_ft_peak(wf .* conj.(img_sub), (100.0,0.0,0.0); method=:FindPhase, psf=rec_psf, verbose=true, ft_mask=nothing, interactive=false);
-res0 = find_ft_peak(wf .* conj.(wf), (0.0,0.0,0.0); method=:FindPhase, psf=rec_psf, verbose=true, ft_mask=nothing, interactive=false);
-res[3]/res0[3]
-
 mydelta = collect(delta(sz))
 # rec_psf = mydelta
 rec_psf = sim_psf # important that it is normalized!
 # rec_psf = asf
-rec_psf2 = conv_psf(sim_psf,sim_psf)
-res = get_subpixel_correl(wf;  other=img_sub, k_est=(100.0, 0.0, 0.0), psf=rec_psf, upsample=false, interactive=false, correl_mask=nothing, method=:FindPhase, verbose=false, reg_param=1e-6)
-# the factor is correl / sum(wf * otf * conj(wf) * otf_shifted). Since wf already contains an OTF, the product cancels out.
-# We only need to account for the fact that the OTF is shifted via the other_psf_argument. This shifting is performed via k_other_psf_shift.
-res0 = get_subpixel_correl(wf; k_est=(0.0, 0.0, 0.0), k_other_psf_shift = (100.0, 0.0, 0.0), psf=nothing, other_psf=rec_psf2, upsample=false, interactive=false, correl_mask=nothing, method=:FindPhase, verbose=false, reg_param=1e-6)
-res[3]/res0[3]
 
 abs(get_rel_subpixel_correl(wf, img_sub, (100.0, 0.0, 0.0), rec_psf; upsample=false))
 # @vt ft(conv_psf(img_sub,rec_psf) .* conj.(conv_psf(wf, rec_psf))) ft(conv_psf(wf,rec_psf) .* conj.(conv_psf(wf, rec_psf)))
