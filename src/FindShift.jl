@@ -19,6 +19,7 @@ using ImageMorphology # for distance-transform based weighting and erosion of ma
 using View5D # for the interactive subpixel peak finder we need get_positions
 
 export abs2_ft_peak, sum_exp_shift, find_ft_peak, correlate, beautify, get_subpixel_peak, align_stack, optim_correl
+export get_rel_subpixel_correl
 export find_shift, find_shift_iter, shift_cut, separable_view, arg_n
 export determine_homography_warps, locate_patches, extract_patches, get_default_markers
 export fourier_mellin, fourier_mellin_align
