@@ -157,7 +157,7 @@ function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=
             end
         end
         if (!isnothing(est_pos))
-            preference_mask = gaussian_col(typeof(mycor), size(mycor); sigma=est_std, pos=est_pos)
+            preference_mask = gaussian_col(typeof(mycor), size(mycor); sigma=est_std, offset=est_pos)
             mycor .*= preference_mask;
         end
         Δx = find_max(mycor, exclude_zero=exclude_zero, dims=dims)
@@ -285,7 +285,7 @@ end
 finds a peak in the Fourier transform of the input data `dat` by iteratively shifting and optimizing the peak strength.
 In detail this is achieved by exploiting the Parseval theorem to calculate the sum of squared differences in Fourier space.
 """
-function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false) where{T,N}
+function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false, grad_tol=1e-7, maxiter=10) where{T,N}
     RT = real(T)
     win = collect(window_hanning(Float32, size(dat), border_in=0.0))
     wdat = win .* dat 
@@ -327,9 +327,9 @@ function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true,
         if !isnothing(max_range)
             lower = k_est .- max_range
             upper = k_est .+ max_range
-            optimize(od, lower, upper, k_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
+            optimize(od, lower, upper, k_est, Fminbox(), Optim.Options(show_trace=verbose, g_tol=grad_tol, iterations=maxiter)) # {GradientDescent}, , x_tol = 1e-2, g_tol=1e-3
         else
-            optimize(od, k_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
+            optimize(od, k_est, LBFGS(), Optim.Options(show_trace=verbose, g_tol=grad_tol, iterations=maxiter)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
             # @time optimize(od, k_est, GradientDescent(), Optim.Options(show_trace=verbose, g_tol=1e-3, iterations=10)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
             # @time optimize(mynorm2, g!, k_est, LBFGS(), Optim.Options(show_trace=true)) #NelderMead(), iterations=2, x_tol = 1e-2, g_tol=1e-3
         end
@@ -476,13 +476,13 @@ k = k_init .* 2pi ./ size(dat)
 + phase_init: the initial phase of the fit 
 + amp_init: the initial amplitude of the fit 
 """
-function lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0)
+function lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0, maxiter=10)
     fg! = get_exp_ikx_fit_fg!(dat)
 
     init_vec = [(Float32.(k_init))..., phase_init, amp_init]
     # @show init_vec
     # @show fg!(1, nothing, init_vec)
-    res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=10))
+    res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=maxiter))
     # print(res)
     res = Optim.minimizer(res)
     k_res = res[1:end-2]
@@ -537,13 +537,13 @@ Returned is a tuple of vector of the peak position in Fourier-space as well as t
 + scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
 + ft_mask: a mask to multiply to the Fourier-transformed function. This can be used to mask out certain regions in the correlation function.
 """
-function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, psf=nothing, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing, reg_param=1e-6) where{T,N}
+function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, mypsf=nothing, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing, reg_param=1e-6) where{T,N}
     # @show k_est
     # fdat = nothing
     # RT = real(T)
     #if isnothing(fdat)
-    if !isnothing(psf)
-        fourier_weigths = ft(abs2.(psf))
+    if !isnothing(mypsf)
+        fourier_weigths = ft(abs2.(mypsf))
         fourier_weigths = conj.(fourier_weigths)./(abs2.(fourier_weigths) .+ reg_param)
         if !isnothing(ft_mask)
             ft_mask .= fourier_weigths .* correl_mask
@@ -605,9 +605,44 @@ function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_
         # @show typeof(res)
         res[1] .= .- res[1]
         return res # return the full information
+    elseif method == :FindShiftedWindow
+        return subpixel_kg(dat, k_est)
     else
         error("Unknown method for localizing peak. Use :FindZoomFT or :FindIter")
     end
+end
+
+"""
+    subpixel_kg(data, k0)
+
+Estimate the subpixel position of a peak in a multidimensional array.
+Parameters:
+    data: array of the data
+    k0: integer Fourierspace position of the peak
+"""
+function subpixel_kg(data, k0)
+    sz = size(data)
+    # generate an object that looks like an array representing an exponential shifting operation
+    # Yet the separability of such an exponential is exploitet to make to code faster.
+    my_nd_exp = exp_ikx_sep(sz, shift_by=k0)
+    kg = zeros(length(k0))
+    for dim=1:ndims(data)
+        # list all projection dimensions
+        alldims = ntuple(d -> (d<dim) ? d : d+1, ndims(data)-1)
+        # project over all dimensions except the current one
+        proj = sum(my_nd_exp .* data, dims=alldims)
+        # create a one-dimensional Hanning window over N-1 points
+        win = (1 .+ cos.(range(-pi, stop=pi, length=sz[dim]-1))) ./ 2
+        # win = window_hanning((sz[dim],).-1) # needs a tuple as size input
+        sum1 = sum(proj[1:end-1] .* win)
+        sum2 = sum(proj[2:end] .* win)
+        # @show dim
+        # @show sz[dim]
+        kg[dim] = k0[dim] + (sz[dim]-1)*(angle(sum2)-angle(sum1))/(2pi)    #*sz[1]/2π
+    end
+    # @show kg
+    peak_cpx = sum_exp_shift(data, kg)
+    return kg, angle(peak_cpx), (abs.(peak_cpx) ./ length(data))
 end
 
 """
@@ -641,7 +676,7 @@ function align_stack(dat::AbstractArray{T,N}; refno=nothing, ref = nothing, damp
     RT = real(T)
     refno = let
         if isnothing(refno)
-            refno=size(dat)[dim] ÷2 +1
+            size(dat)[dim] ÷2 +1
         else
             refno
         end
@@ -651,7 +686,7 @@ function align_stack(dat::AbstractArray{T,N}; refno=nothing, ref = nothing, damp
     end
 	ref = let
 		if isnothing(ref)
-			ref = slice(dat, dim, refno)
+			slice(dat, dim, refno)
 		else
 			ref
 		end
@@ -662,16 +697,18 @@ function align_stack(dat::AbstractArray{T,N}; refno=nothing, ref = nothing, damp
 	fwin = window_radial_hanning(Float32, size(ref), 		 
   		border_in=max_freq*0.8,border_out=max_freq*1.2)
 		# rr(size(ref)) .< maxfreq .* size(ref)[1]
-	imgs = []
+	# imgs = []
 	res_shifts = []
 	fref = fwin .* conj(ft(wh .* (ref .- mean(ref))))
+    res = similar(dat, RT)
 	for n=1:size(dat,dim)
         aslice = slice(dat, dim, n)
+        res_slice = slice(res, dim, n)
         # aslice = dropdims(aslice, dims=dim)
         myshift = let 
             if isnothing(shifts)
                 cor_ft = ft(wh .* (aslice .- mean(aslice))) .* fref
-                sh, pha, am = find_ft_peak(cor_ft, method=method, interactive=false)
+                sh, pha, am = find_ft_peak(cor_ft, method=method, interactive=false, exclude_zero=false)
                 sh
             else
                 shifts[n]
@@ -681,10 +718,12 @@ function align_stack(dat::AbstractArray{T,N}; refno=nothing, ref = nothing, damp
 		# midp = size(cor).÷ 2 .+1
 		# myshift = midp .- Tuple(p)
 		push!(res_shifts, myshift)
-		push!(imgs, shift(aslice, myshift))
+        res_slice .=  shift(aslice, myshift)
+		# push!(imgs, shift(aslice, myshift))
 		# push!(imgs, cor_ft)
 	end
-	cat(imgs...,dims=dim), res_shifts
+	# cat(imgs...;dims=dim), res_shifts
+	res, res_shifts
 end
 
 
