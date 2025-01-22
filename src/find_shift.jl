@@ -157,7 +157,7 @@ function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=
             end
         end
         if (!isnothing(est_pos))
-            preference_mask = gaussian_col(typeof(mycor), size(mycor); sigma=est_std, offset=est_pos)
+            preference_mask = gaussian_col(typeof(mycor), size(mycor); sigma=est_std, offset=(size(mycor).÷2 .+1).+est_pos)
             mycor .*= preference_mask;
         end
         Δx = find_max(mycor, exclude_zero=exclude_zero, dims=dims)
