@@ -13,16 +13,16 @@ otf = ft(mypsf)
 up = collect(ift(otf));
 up_other = up;
 
-res = find_ft_peak(up .* conj.(up_other), (100.0,0.0,0.0); method=:FindPhase, psf=mypsf, verbose=true, ft_mask=nothing, interactive=false, reg_param=1e-16);
+res = find_ft_peak(up .* conj.(up_other), (100.0,0.0); method=:FindZoomFT, psf=mypsf, verbose=true, ft_mask=nothing, interactive=false, reg_param=1e-16);
 res[3]
 
-res = find_ft_peak(up .* conj.(up_other), (210.0,0.0,0.0); method=:FindPhase, psf=mypsf, verbose=true, ft_mask=nothing, interactive=false, reg_param=1e-16);
+res = find_ft_peak(up .* conj.(up_other), (210.0,0.0); method=:FindShiftedWindow, psf=mypsf, verbose=true, ft_mask=nothing, interactive=false, reg_param=1e-16);
 res[3]
 
 ########## more complex example
 sz = (1000,1000)
 obj = rand(sz...)
-k = 100.0
+k = 100.234
 illu = 1 .+ cos.(2π * (1:sz[1])/sz[1] * k .+ 0.1)
 
 obj = rand(sz...)
@@ -35,6 +35,13 @@ wf = conv_psf(obj, sim_psf)
 img_sub = img .- wf
 @vt img img_sub
 @vt ft(img) ft(img_sub)
+
+res = get_subpixel_correl(wf; other= img_sub, k_est=(100.0, 0.0), psf= sim_psf, upsample=false, method=:FindZoomFT)
+res = get_subpixel_correl(wf; other= img_sub, k_est=(100.0, 0.0), psf= sim_psf, upsample=false, method=:FindIter)
+res = get_subpixel_correl(wf; other= img_sub, k_est=(100.0, 0.0), psf= sim_psf, upsample=false, method=:FindWaveFit)
+res = get_subpixel_correl(wf; other= img_sub, k_est=(100.0, 0.0), psf= sim_psf, upsample=false, method=:FindCOM)
+res = get_subpixel_correl(wf; other= img_sub, k_est=(100.0, 0.0), psf= sim_psf, upsample=false, method=:FindParabola)
+res = get_subpixel_correl(wf; other= img_sub, k_est=(100.0, 0.0), psf= sim_psf, upsample=false, method=:FindShiftedWindow)
 
 mydelta = collect(delta(sz))
 # rec_psf = mydelta

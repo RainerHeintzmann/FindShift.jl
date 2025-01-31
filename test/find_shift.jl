@@ -3,6 +3,7 @@ using SeparableFunctions
 using FiniteDifferences
 using TestImages
 using IndexFunArrays
+using FourierTools # for ift in psf generation
 
 @testset "Testset find_shift_iter" begin
     sz = (100,103)
@@ -72,7 +73,6 @@ using IndexFunArrays
     @test isapprox([.-k_iter[1]..., k_iter[2:3]...], vec0, rtol=1e-3)
     k_fit = find_ft_peak(exp_wave, method=:FindWaveFit)
     @test isapprox([.-k_fit[1]..., k_fit[2:3]...], vec0, rtol=1e-3)
-
 end
 
 @testset "Correlations" begin
@@ -94,7 +94,7 @@ end
     # highpass = rr(size(psf).*2) .> 50 # gaussian_sep(size(psf).*2, sigma=55.0)
 
     corr_res_k, correl_res_p, correl_res_a = get_subpixel_correl(noisy_data; other=nothing, k_est=nothing, psf=psf_bandpass, upsample=true, correl_mask = highpass)
-    @test isapprox(corr_res_k[1:2], vec_pos, rtol=1e-2)
+    @test isapprox([corr_res_k[1:2]...], vec_pos, rtol=1e-2)
 
     # corr_res_k, correl_res_p, correl_res_a = get_subpixel_correl(noisy_data; interactive=true, other=nothing, k_est=nothing, psf=psf_bandpass, upsample=true, correl_mask = highpass)
 end

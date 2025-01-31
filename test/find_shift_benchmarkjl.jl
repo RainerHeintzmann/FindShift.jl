@@ -1,20 +1,34 @@
 using FindShift
 using SeparableFunctions
 using FiniteDifferences
+using BenchmarkTools
 
 # benchmark
 sz = (128, 128)  
-sz = (2048, 2048)  
-vec0 = ([11.2, 14.3], 0.3, 1.0)
+# sz = (2048, 2048)  
+vec0 = ([11.2, 14.3], 0.3, 1.0) # position, phase, amplitude
 
+# First: perfect exponential wave
 exp_wave = vec0[3] .* exp(1im*vec0[2]) .* exp_ikx_col(sz, shift_by = .-vec0[1])
-vec_zoom = find_ft_peak(exp_wave, method=:FindZoomFT) # 7.4 ms
-vec_iter = find_ft_peak(exp_wave, method=:FindIter) # 2.5 ms
-vec_fit = find_ft_peak(exp_wave, method=:FindWaveFit) # 6.649 ms
+# exp_wave .*= (gaussian_sep(sz, sigma=(3.0, 4.0), offset=(33.5, 34.2)) .+  # finds the wrong intitial guess! Only :FindZoomFT works here.
+#             gaussian_sep(sz, sigma=(3.0, 4.0), offset=(44.5, 14.2)) .+
+#             gaussian_sep(sz, sigma=(3.0, 4.0), offset=(44.5, 114.2)))
+exp_wave .*= (gaussian_sep(sz, sigma=(3.0, 4.0), offset=(33.5, 34.2)) .+
+             gaussian_sep(sz, sigma=(3.0, 4.0), offset=(44.5, 14.2))); # NOT WORKING FOR :FindShiftedWindow
+exp_wave .*= gaussian_sep(sz, sigma=(3.0, 4.0), offset=(33.5, 34.2)); # ALSO WORKING FOR :FindShiftedWindow
+vec_zoom = find_ft_peak(exp_wave, method=:FindZoomFT)[1] .- vec0[1] # 0,0
+vec_iter = find_ft_peak(exp_wave, method=:FindIter)[1] .- vec0[1]  # -2e-7, 1e-6
+vec_fit = find_ft_peak(exp_wave, method=:FindWaveFit)[1] .- vec0[1] # -8e-7, 3e-7
+vec_com = find_ft_peak(exp_wave, method=:FindCOM)[1] .- vec0[1] # -0.25, -0.11 BAD FOR SHARP PEAKS
+vec_par = find_ft_peak(exp_wave, method=:FindParabola)[1] .- vec0[1] # -0.16, -0.09 BAD FOR SHARP PEAKS
+vec_shift = find_ft_peak(exp_wave, method=:FindShiftedWindow)[1] .- vec0[1] # -0.01, -0.01 BAD FOR BROAD PEAKS
 
-@btime k_zoom = find_ft_peak($exp_wave, method=:FindZoomFT) # 7.3 ms
-@btime k_iter = find_ft_peak($exp_wave, method=:FindIter) # 2.5 ms
-@btime k_fit = find_ft_peak($exp_wave, method=:FindWaveFit) # 6.649 ms
+@btime k_zoom = find_ft_peak($exp_wave, method=:FindZoomFT) # 6.9 ms, 125 ms
+@btime k_iter = find_ft_peak($exp_wave, method=:FindIter) # 2.8 ms, 1.437 s
+@btime k_fit = find_ft_peak($exp_wave, method=:FindWaveFit) # 5.5 ms, 3.99 s
+@btime k_com = find_ft_peak($exp_wave, method=:FindCOM) # 0.27 ms, 170 ms
+@btime k_par = find_ft_peak($exp_wave, method=:FindParabola) # 0.270 ms,  189 ms
+@btime k_shift = find_ft_peak($exp_wave, method=:FindShiftedWindow) # 0.357 ms,  190 ms
 
 sz = (1024, 1024)  
 exp_wave = vec0[4] .* exp_ikx_col(sz, shift_by = vec0[1:2])

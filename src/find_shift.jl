@@ -285,7 +285,7 @@ end
 finds a peak in the Fourier transform of the input data `dat` by iteratively shifting and optimizing the peak strength.
 In detail this is achieved by exploiting the Parseval theorem to calculate the sum of squared differences in Fourier space.
 """
-function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false, grad_tol=1e-7, maxiter=10) where{T,N}
+function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true, max_range=nothing, verbose=false, grad_tol=1e-7, maxiter=10, normalize=true) where{T,N}
     RT = real(T)
     win = collect(window_hanning(Float32, size(dat), border_in=0.0))
     wdat = win .* dat 
@@ -298,11 +298,14 @@ function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true,
         end
     end
     k_est = RT.([k_est...])
-    v_init = sqrt(abs2_ft_peak(win .* dat, k_est))
-    if v_init != 0.0
-        wdat ./= v_init
-    else
-        @warn "FT peak is zero."
+
+    if (normalize)
+        v_init = sqrt(abs2_ft_peak(wdat, k_est))
+        if v_init != 0.0
+            wdat ./= v_init
+        else
+            @warn "FT peak is zero."
+        end
     end
 
     mynorm2(x) = -abs2_ft_peak(wdat, x)  # to normalize the data appropriately
@@ -464,7 +467,7 @@ end
 
 # gradient-based fitting routine that fits a sine function to real-valued data
 """
-    lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0)
+    lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0; verbose=false, normalize=true)
 
 fits a (potentially non-commensurate) exp_ikx function to N-dimensional data using Optim.jl
 and a hard-coded model of the derivatives.
@@ -476,18 +479,24 @@ k = k_init .* 2pi ./ size(dat)
 + phase_init: the initial phase of the fit 
 + amp_init: the initial amplitude of the fit 
 """
-function lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0, maxiter=10)
+function lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0, maxiter=10; verbose=false, normalize=true)
     fg! = get_exp_ikx_fit_fg!(dat)
 
+    normfac = 1
+    if normalize
+        normfac = mean(abs.(dat))
+        dat ./= normfac
+        amp_init /= normfac
+    end
     init_vec = [(Float32.(k_init))..., phase_init, amp_init]
     # @show init_vec
     # @show fg!(1, nothing, init_vec)
-    res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=maxiter))
+    res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=maxiter, show_trace=verbose))
     # print(res)
     res = Optim.minimizer(res)
     k_res = res[1:end-2]
     phi_res = res[end-1]
-    a_res = res[end]
+    a_res = res[end] * normfac
     return k_res, phi_res, a_res
 end
 
@@ -528,6 +537,12 @@ Returned is a tuple of vector of the peak position in Fourier-space as well as t
     `:FindZoomFT`:  Uses a chirp Z transformation to zoom into the peak. 
     `:FindIter`:    Uses an iterative optimization via FFT-shift operations to find the peak.
     `:FindWaveFit`: Uses a gradient-based fitting of a complex exponential to the input data to find the peak.
+    `:FindShiftedWindow`: Uses a method that shifts a real-space window and sums over it to find the peak in Fourier-space.
+                Note that there can be issues with a multi-peaked modification in real space. But it is quite fast.
+    `:FindCOM`: Uses an FFT and uses a 3x3x... region to localize its absolute value via a center of mass method (subtracting the minimum in this region).
+                Note that this does not work well for very narrow peaks.
+    `:FindParabola`: Uses an FFT and uses a 3x3x... region to localize its absolute value via fitting a parbola through the integer center along each dimension.
+                Note that this does not work well for very narrow peaks.
 + interactive: a boolean defining whether to use user-interaction to define the approximate peak position. Only used if `k_est` is `nothing`.
 + ignore_zero: if `true`, the zero position will be ignored. Only used if `!isnothing(k_est)`.
 + max_range: maximal search range for the iterative optimization to be used as a box-constraint for the `Optim` package.
@@ -536,14 +551,15 @@ Returned is a tuple of vector of the peak position in Fourier-space as well as t
 + exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
 + scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
 + ft_mask: a mask to multiply to the Fourier-transformed function. This can be used to mask out certain regions in the correlation function.
++ `normalize`: if `true` the data will be normalized for the iterative methods to prevent to large gradients 
 """
-function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, mypsf=nothing, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing, reg_param=1e-6) where{T,N}
+function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, psf=nothing, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing, reg_param=1e-6, normalize=true) where{T,N}
     # @show k_est
     # fdat = nothing
     # RT = real(T)
     #if isnothing(fdat)
-    if !isnothing(mypsf)
-        fourier_weigths = ft(abs2.(mypsf))
+    if !isnothing(psf)
+        fourier_weigths = ft(abs2.(psf))
         fourier_weigths = conj.(fourier_weigths)./(abs2.(fourier_weigths) .+ reg_param)
         if !isnothing(ft_mask)
             ft_mask .= fourier_weigths .* correl_mask
@@ -565,14 +581,14 @@ function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT
         res_phase = []
         res_int = []
         for k in k_est
-            res = find_peak(dat, fdat, k; method=method, exclude_zero=exclude_zero, max_range=max_range, scale=scale, abs_first=abs_first, roi_size=roi_size, verbose=verbose);
+            res = find_peak(dat, fdat, k; method=method, exclude_zero=exclude_zero, max_range=max_range, scale=scale, abs_first=abs_first, roi_size=roi_size, verbose=verbose, normalize=normalize);
             push!(res_k, res[1])
             push!(res_phase, res[2])
             push!(res_int, res[3])
         end
         return res_k, res_phase, res_int
     else
-        return find_peak(dat, fdat, k_est; method=method, exclude_zero=exclude_zero, max_range=max_range, scale=scale, abs_first=abs_first, roi_size=roi_size, verbose=verbose)
+        return find_peak(dat, fdat, k_est; method=method, exclude_zero=exclude_zero, max_range=max_range, scale=scale, abs_first=abs_first, roi_size=roi_size, verbose=verbose, normalize=normalize)
     end
 
     # @show k_est
@@ -580,18 +596,87 @@ function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT
     # k_est = [k_est...]
 end
 
-function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false)
-    if method == :FindZoomFT
+function get_com(fdat, k_est) # should one use abs or abs2?
+    k_est = Tuple(round.(Int, k_est))
+    ctr = size(fdat) .÷ 2 .+ 1
+    ROI = (abs.(select_region_view(collect(fdat), ntuple((d)->3, ndims(fdat)); center=k_est.+ ctr))) # .^0.2
+    ROI = ROI .- minimum(ROI)
+    t = ntuple((d)->0, ndims(fdat))
+    for ci in CartesianIndices(size(ROI))
+        t = t .+ Tuple(ci) .* ROI[ci]
+    end
+    return (t./sum(ROI)) .- 2 .+ k_est
+end
+
+function get_parabola_max(fdat, k_est) # should one use abs or abs2?
+    k_est = Tuple(round.(Int, k_est))
+    ctr = size(fdat) .÷ 2 .+ 1
+    ROI = (abs.(select_region_view(collect(fdat), ntuple((d)->3, ndims(fdat)); center=k_est.+ ctr))) #.^0.2
+    res = zeros(length(k_est))
+    for d=1:ndims(fdat)
+        y1 = ROI[ntuple((i)->(i==d) ? 1 : 2, ndims(fdat))...]
+        y2 = ROI[ntuple((i)->(i==d) ? 2 : 2, ndims(fdat))...]
+        y3 = ROI[ntuple((i)->(i==d) ? 3 : 2, ndims(fdat))...]
+        a = (y1 + y3 - 2*y2)/2
+        b = (y3 -y1)/2
+        # c = y2
+        res[d] = -b / a # (y3 - y1)/(y1+y3+2*y2)
+        # mymax = a*(res[d])^2+b*res[d]+c
+    end
+    return Tuple(res) .+ k_est
+end
+
+"""
+    find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false)
+
+    finds a peak in Fourier space using various strategies. Some need FFTs and others not.
++ method: defines which method to use for finding the maximum. Current options:
+    `:FindZoomFT`:  Uses a chirp Z transformation to zoom into the peak. 
+    `:FindIter`:    Uses an iterative optimization via FFT-shift operations to find the peak.
+    `:FindWaveFit`: Uses a gradient-based fitting of a complex exponential to the input data to find the peak.
+    `:FindShiftedWindow`: Uses a method that shifts a real-space window and sums over it to find the peak in Fourier-space.
+                Note that there can be issues with a multi-peaked modification in real space. But it is quite fast.
+    `:FindCOM`: Uses an FFT and uses a 3x3x... region to localize its absolute value via a center of mass method (subtracting the minimum in this region).
+                Note that this does not work well for very narrow peaks.
+    `:FindParabola`: Uses an FFT and uses a 3x3x... region to localize its absolute value via fitting a parbola through the integer center along each dimension.
+                Note that this does not work well for very narrow peaks.
++ exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
++ max_range: maximal search range to look for in the +/- direction. Default: `nothing`, which does not restrict the local search range.
++ scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
++ abs_first: if `true`, the absolute is calulated first.
++ roi_size: the size of the region of interest to use for the center of mass.
++ verbose: if `true`, the optimization routine will print out the progress.
++ normalize: if `true` the data will be normalized for the iterative methods to prevent to large gradients
+"""
+function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, normalize=true)
+    # @show k_est
+    if method == :FindCOM # center of mass based determination of the maximum
+        if isnothing(fdat)
+            fdat = ft(dat)
+        end
+        kg = get_com(fdat, k_est)
+        peak_cpx = sum_exp_shift(dat, kg)
+        return kg, angle(peak_cpx), (abs.(peak_cpx) ./ length(dat))
+    elseif method == :FindParabola # parabola fit to the peak
+        if isnothing(fdat)
+            fdat = ft(dat)
+        end
+        kg = get_parabola_max(fdat, k_est)
+        peak_cpx = sum_exp_shift(dat, kg)
+        return kg, angle(peak_cpx), (abs.(peak_cpx) ./ length(dat))
+    elseif method == :FindZoomFT # use CZT to zoom in and pick the maximum in the zoomed region
         # k_est = Tuple(round.(Int, k_est))
         if isnothing(fdat)
             fdat = ft(dat)
         end
         k_est = Tuple(round.(Int, k_est))
-        return get_subpixel_peak(fdat, k_est, scale=scale, exclude_zero=exclude_zero, abs_first=abs_first, roi_size=roi_size)
-    elseif method == :FindIter
+        kg, _, _ = get_subpixel_peak(fdat, k_est, scale=scale, exclude_zero=exclude_zero, abs_first=abs_first, roi_size=roi_size)
+        peak_cpx = sum_exp_shift(dat, kg) # re-calculate angle and 
+        return kg, angle(peak_cpx), (abs.(peak_cpx) ./ length(dat))
+    elseif method == :FindIter # use iterative optimization to find the peak
         k_est = Tuple(round.(Int, k_est))
-        return find_ft_iter(dat, k_est; exclude_zero=exclude_zero, max_range=max_range, verbose=verbose);
-    elseif method == :FindWaveFit # does not ned fdat
+        return find_ft_iter(dat, k_est; exclude_zero=exclude_zero, max_range=max_range, verbose=verbose, normalize=normalize);
+    elseif method == :FindWaveFit # does not need fdat. Uses the data directly via iterative optimization
         k_est = Tuple(round.(Int, k_est))
         k_pos = round.(Int, k_est) .+ size(fdat) .÷ 2 .+ 1
         if isnothing(fdat)
@@ -600,12 +685,12 @@ function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_
         val = fdat[k_pos...]
         phase_init = angle(val)
         amp_init = abs(val) / length(dat)
-        res = lsq_fit_exp_ikx(dat, .-k_est, phase_init, amp_init);
+        res = lsq_fit_exp_ikx(dat, .-k_est, phase_init, amp_init, verbose=verbose, normalize=normalize);
         # @show typeof(fdat)
         # @show typeof(res)
         res[1] .= .- res[1]
         return res # return the full information
-    elseif method == :FindShiftedWindow
+    elseif method == :FindShiftedWindow # uses a shifted window of the non-fted data to find the peak.
         return subpixel_kg(dat, k_est)
     else
         error("Unknown method for localizing peak. Use :FindZoomFT or :FindIter")
@@ -626,19 +711,40 @@ function subpixel_kg(data, k0)
     # Yet the separability of such an exponential is exploitet to make to code faster.
     my_nd_exp = exp_ikx_sep(sz, shift_by=k0)
     kg = zeros(length(k0))
+    shift_one_pixel = exp_ikx_sep(sz, shift_by=ones(length(k0)))
+    win_shift = 1
     for dim=1:ndims(data)
+        if sz[dim] == 1
+            kg[dim] = k0[dim]
+            continue
+        end
         # list all projection dimensions
         alldims = ntuple(d -> (d<dim) ? d : d+1, ndims(data)-1)
-        # project over all dimensions except the current one
+        # project over all dimensions except the current one, but also shifts the peak back to the center with integer accuracy
         proj = sum(my_nd_exp .* data, dims=alldims)
         # create a one-dimensional Hanning window over N-1 points
-        win = (1 .+ cos.(range(-pi, stop=pi, length=sz[dim]-1))) ./ 2
+        win = (1 .+ cos.(range(-pi, stop=pi, length=sz[dim]-win_shift))) ./ 2
         # win = window_hanning((sz[dim],).-1) # needs a tuple as size input
-        sum1 = sum(proj[1:end-1] .* win)
-        sum2 = sum(proj[2:end] .* win)
+        sum1 = sum(proj[1:end-win_shift] .* win)
+        sum2 = sum(proj[1+win_shift:end] .* win)
+        rel_k = (sz[dim]-win_shift)*(angle(sum2)-angle(sum1))/(2pi)/win_shift
+        sum1 = sum(proj[1:end-win_shift] .* shift_one_pixel.args[dim][1:end-win_shift] .* win)
+        sum2 = sum(proj[1+win_shift:end] .* shift_one_pixel.args[dim][1+win_shift:end] .* win)
+        rel_km1 = (sz[dim]-win_shift)*(angle(sum2)-angle(sum1))/(2pi)/win_shift
+        sum1 = sum(proj[1:end-win_shift] .* conj.(shift_one_pixel.args[dim][1:end-win_shift]) .* win)
+        sum2 = sum(proj[1+win_shift:end] .* conj.(shift_one_pixel.args[dim][1+win_shift:end]) .* win)
+        rel_kp1 = (sz[dim]-win_shift)*(angle(sum2)-angle(sum1))/(2pi)/win_shift
         # @show dim
         # @show sz[dim]
-        kg[dim] = k0[dim] + (sz[dim]-1)*(angle(sum2)-angle(sum1))/(2pi)    #*sz[1]/2π
+        if abs((rel_kp1 - rel_km1) - 2.0) > 0.1
+            # @warn "Problem in phase-based subpixel estimation using the :FindShiftedWindow method. Peak too broad. Using integer maximum instead."
+            # works for some peaks but not for all
+            kg[dim] = k0[dim] + rel_k / ((rel_kp1 - rel_km1)/2)    #*sz[1]/2π
+            # kg[dim] = k0[dim]
+        else
+            kg[dim] = k0[dim] + rel_k # / ((rel_kp1 - rel_km1)/2)    #*sz[1]/2π
+        end
+        # @show kg[dim] = k0[dim] + (rel_kp1+rel_km1)/win_shift/(rel_kp1 - rel_km1)    #*sz[1]/2π
     end
     # @show kg
     peak_cpx = sum_exp_shift(data, kg)
@@ -849,7 +955,19 @@ end
 #  conclusion: cc seems to be the most reliable correlation
 
 # now we try to find the subpixel position using a chirped z-transform
+"""
+    get_subpixel_patch(cor::AbstractArray{T,N}, p_est; scale=10, roi_size=5) where{T,N}
 
+finds a subpixel patch of the correlation `cor` at the position `p_est` using a chirped z-transform (CZT).
+To this aim, the input correlation is first centered (and potentially cropped) and then Fourier transformed 
+and finally inverse Fourier transformed with a chirped z-transform, which zooms in by the factor `scale`.
+
+# Arguments
++ cor: the correlation to zoom into
++ p_est: the position to zoom into
++ scale: the zoom factor to use (default: 10)
++ roi_size: the size of the region of interest to extract during this procedure
+"""
 function get_subpixel_patch(cor::AbstractArray{T,N}, p_est; scale=10, roi_size=5) where{T,N}
     if !(any(isinteger.(scale)))
         error("Scale needs to be an integer.")
@@ -882,7 +1000,7 @@ end
 """
     get_subpixel_peak(cor::AbstractArray{T,N}, p_est=nothing; exclude_zero=true, scale=10, roi_size=4, abs_first=false, dim=3) where{T,N}
 
-obtains the subpixel peak position of the correlation `cor` with an initial estimate `p_est` using a chirped z-transform.
+obtains the subpixel peak position of the correlation `cor` with an initial estimate `p_est` using a chirped z-transform (CZT).
 """
 function get_subpixel_peak(cor::AbstractArray{T,N}, p_est=nothing; exclude_zero=true, scale=10, roi_size=4, abs_first=false, dim=3) where{T,N}
     p_est = let
@@ -958,7 +1076,10 @@ returns the subpixel correlation of `dat` with `other` or by default with itself
 
 returns the subpixel position of the correlation peak and the phase and amplitude of the peak.
 """
-function get_subpixel_correl(dat;  other=dat, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6)
+function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6)
+    if isnothing(other)
+        other = dat
+    end
     up = prepare_correlation(dat, psf; upsample=upsample)
     up_other = prepare_correlation(other, psf; upsample=upsample)
 
