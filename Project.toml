@@ -3,18 +3,6 @@ uuid = "643ec891-bf64-479f-8088-26ff5ce1b396"
 authors = ["RainerHeintzmann <heintzmann@gmail.com>"]
 version = "0.2.0"
 
-[compat]
-FFTW = "1.4, 1.5, 1.6, 1.7, 1.8"
-FiniteDifferences = "0.12.32"
-IndexFunArrays = "0.2"
-NDTools = "0.5, 0.6, 0.7"
-SeparableFunctions = "0.1, 0.2, 0.3"
-StaticArrays = "0.1.5, 0.3, 0.4, 0.13, 0.14, 1"
-TestImages = "1.9.0"
-View5D = "0.5.2, 0.6"
-julia = "1.7, 1.8, 1.9, 1.10, 1.11"
-
-
 [deps]
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
@@ -31,6 +19,17 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 ThinPlateSplines = "1d861738-f48e-4029-b1d3-81ce6bc7f5ab"
 View5D = "90d841e0-6953-4e90-9f3a-43681da8e949"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
+
+[compat]
+FFTW = "1.4, 1.5, 1.6, 1.7, 1.8"
+FiniteDifferences = "0.12.32"
+IndexFunArrays = "0.2"
+NDTools = "0.5, 0.6, 0.7"
+SeparableFunctions = "0.1, 0.2, 0.3"
+StaticArrays = "0.1.5, 0.3, 0.4, 0.13, 0.14, 1"
+TestImages = "1.9.0"
+View5D = "0.5.2, 0.6"
+julia = "1.7, 1.8, 1.9, 1.10, 1.11"
 
 [extras]
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"

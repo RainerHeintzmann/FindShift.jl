@@ -117,6 +117,8 @@ The optional argument Δx specifies a known integer shift, which then is used wi
 - `est_pos`:  if provided, a Gaussian preference mask will be applied to bias towards a shift as defined by Δx
 - `est_std`:  the standard deviation of the Gaussian preference mask (only used if `est_pos` was defined)
 - `lambda`: a regularisation factor for the masked cross-correlation. It can be interpreted as approximately the minimum ratio of accepted overlap mask pixels.
+- `exclude_zero`: if `true` the zero shift is excluded from the search
+- `dims`: the dimensions to search for the shift in
 
 # Example:
 julia> img = rand(512,512);
@@ -134,7 +136,8 @@ julia> find_shift_iter(simg, img)
  3.298879717301924
  4.449585689185147
 """
-function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=nothing, est_pos=nothing, est_std=10.0, lambda=0.05, exclude_zero=false, dims=1:ndims(dat1))
+function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=nothing, 
+                                est_pos=nothing, est_std=10.0, lambda=0.05, exclude_zero=false, dims=1:ndims(dat1))
     if isnothing(Δx)
         mycor = let
             if (!isnothing(mask1) || !isnothing(mask2))
@@ -162,6 +165,9 @@ function find_shift(dat1, dat2, Δx=nothing; zoom=nothing, mask1=nothing, mask2=
         end
         Δx = find_max(mycor, exclude_zero=exclude_zero, dims=dims)
     end
+
+    # find_peak(dat, fdat, Δx; method=:FindZoomFT, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, normalize=true)
+
     if !isnothing(zoom)
         if length(zoom) == 1
             zoom = ntuple(i -> zoom, Val(ndims(dat1)))
@@ -640,6 +646,12 @@ end
                 Note that this does not work well for very narrow peaks.
     `:FindParabola`: Uses an FFT and uses a 3x3x... region to localize its absolute value via fitting a parbola through the integer center along each dimension.
                 Note that this does not work well for very narrow peaks.
+    `:FindShiftedWindow`: Uses a shifted window of the non-fted data to find the peak.
+
++ dat:  data in real space, which will be Fourier transformed
++ fdat: the Fourier-transformed data. If `nothing` is provided, the Fourier transform will be calculated (if needed).
++ k_est: a starting value for the peak-position. Needs to be accurate enough such that a gradient-based search can be started with this value
+        If `nothing` is provided, an FFT will be performed and a maximum is chosen.
 + exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
 + max_range: maximal search range to look for in the +/- direction. Default: `nothing`, which does not restrict the local search range.
 + scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
