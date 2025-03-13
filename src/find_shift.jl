@@ -787,7 +787,7 @@ julia> dats = cat((shift(dat, .- sh[d]) for d=1:N)..., dims=3);
 
 julia> dat_aligned, shifts = align_stack(dats);
 
-juliat> shifts .- sh 
+juliat> myerr = [shifts[d][1:2] .- sh[d] for d in 1:length(sh)]
 ```
 """
 function align_stack(dat::AbstractArray{T,N}; refno=nothing, ref = nothing, damp=0.1, max_freq=0.4, dim=ndims(dat), method=:FindIter, shifts=nothing) where{T,N}

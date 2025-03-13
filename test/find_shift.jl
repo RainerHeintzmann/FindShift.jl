@@ -98,3 +98,16 @@ end
 
     # corr_res_k, correl_res_p, correl_res_a = get_subpixel_correl(noisy_data; interactive=true, other=nothing, k_est=nothing, psf=psf_bandpass, upsample=true, correl_mask = highpass)
 end
+
+@testset "align_stack" begin
+  dat = rand(100,100);
+
+  N=10; sh = [rand(2) for d=1:N]; sh[N÷2+1] = [0.0,0.0]
+  dats = cat((shift(dat, .- sh[d]) for d=1:N)..., dims=3);
+  dat_aligned, shifts = align_stack(dats);
+  @test size(dat_aligned) == size(dats)
+  @test size(shifts[1]) == (3,)
+  myerr = [abs.(shifts[d][1:2] .- sh[d]) for d in 1:length(sh)]
+
+  @test all(maximum(myerr) .< 0.01)
+end
