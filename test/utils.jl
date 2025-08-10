@@ -1,4 +1,12 @@
-@testset "Testset fourier_mellin" begin
+@testset "interpolation test" begin
+    using Interpolations
+    data = ones(Float32, 100,100) # rand(100,100)
+    itp = extrapolate(interpolate(data, BSpline(Linear())), 0.0);
+    r = itp[2.2, 33.3]
+    @test r ≈ 1f0
+end
+
+@testset "Testset utils" begin
     img1 = ones(Float32, 100,100) # rand(100,100)
     α = 30.0 *pi/180
     zoom = 2.0

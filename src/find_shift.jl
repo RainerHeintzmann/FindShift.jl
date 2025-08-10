@@ -530,16 +530,16 @@ function get_pixel_peak_pos(fdat; interactive=false, overwrite=true, exclude_zer
 end
 
 """
-    find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10, ft_mask=nothing)
+    find_ft_peak(dat, k_est=nothing; method=:FindZoomFT::FindMethod, interactive=true, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=true, roi_size=10, ft_mask=nothing, verbose=false, normalize=true, reg_param=1e-6, show_quality=false, phase_only=false, reg_param_p=1e-8, psf=nothing)
 
 localizes the peak in Fourier-space with sub-pixel accuracy using various routines, some involving fitting.
 Returned is a tuple of vector of the peak position in Fourier-space as well as the phase and absolute amplitude of the peak.
 
 # Arguments
-+ dat:  data in real space, which will be Fourier transformed
-+ k_est: a starting value for the peak-position. Needs to be accurate enough such that a gradient-based search can be started with this value
++ `dat`:  data in real space, which will be Fourier transformed
++ `k_est`: a starting value for the peak-position. Needs to be accurate enough such that a gradient-based search can be started with this value
         If `nothing` is provided, an FFT will be performed and a maximum is chosen. 
-+ method: defines which method to use for finding the maximum. Current options:
++ `method`: defines which method to use for finding the maximum. Current options:
     `:FindZoomFT`:  Uses a chirp Z transformation to zoom into the peak. 
     `:FindIter`:    Uses an iterative optimization via FFT-shift operations to find the peak.
     `:FindWaveFit`: Uses a gradient-based fitting of a complex exponential to the input data to find the peak.
@@ -549,17 +549,23 @@ Returned is a tuple of vector of the peak position in Fourier-space as well as t
                 Note that this does not work well for very narrow peaks.
     `:FindParabola`: Uses an FFT and uses a 3x3x... region to localize its absolute value via fitting a parbola through the integer center along each dimension.
                 Note that this does not work well for very narrow peaks.
-+ interactive: a boolean defining whether to use user-interaction to define the approximate peak position. Only used if `k_est` is `nothing`.
-+ ignore_zero: if `true`, the zero position will be ignored. Only used if `!isnothing(k_est)`.
-+ max_range: maximal search range for the iterative optimization to be used as a box-constraint for the `Optim` package.
-+ overwrite: if `false` the previously saved interactive click position will be used. If `true` the previous value is irnored and the user is asked to click again.
-+ max_range: maximal search range to look for in the +/- direction. Default: `nothing`, which does not restrict the local search range.
-+ exclude_zero: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
-+ scale: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
-+ ft_mask: a mask to multiply to the Fourier-transformed function. This can be used to mask out certain regions in the correlation function.
++ `interactive`: a boolean defining whether to use user-interaction to define the approximate peak position. Only used if `k_est` is `nothing`.
++ `ignore_zero`: if `true`, the zero position will be ignored. Only used if `!isnothing(k_est)`.
++ `max_range`: maximal search range for the iterative optimization to be used as a box-constraint for the `Optim` package.
++ `overwrite`: if `false` the previously saved interactive click position will be used. If `true` the previous value is irnored and the user is asked to click again.
++ `max_range`: maximal search range to look for in the +/- direction. Default: `nothing`, which does not restrict the local search range.
++ `exclude_zero`: if `true`, the zero pixel position in Fourier space is excluded, when looking for a global maximum
++ `scale`: the zoom scale to use for the zoomed FFT, if `method==:FindZoomFT`
++ `ft_mask`: a mask to multiply to the Fourier-transformed function. This can be used to mask out certain regions in the correlation function.
 + `normalize`: if `true` the data will be normalized for the iterative methods to prevent to large gradients 
++ `roi_size`: the size of the region of interest to use for the iterative methods. This is only used if `method` is `:FindIter` or `:FindShiftedWindow`.
++ `verbose`: if `true`, the optimization will print out information about the optimization process.
++ `show_quality`: if `true`, the peak contrast will be printed out, which is the ratio of the peak height to the base height surrounding the peak.
++ `phase_only`: if `true`, the product in Fourier space as represented by `dat` is first normalized to an absolute of one. This yields a phase-only correlation.
++ `reg_param`: a regularization parameter to avoid division by zero in the Fourier space. This is only used if `psf` is provided.
++ `reg_param_p`: a regularization parameter to avoid division by zero in the Fourier space, if `phase_only` is true. Default: 1e-8.
 """
-function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, psf=nothing, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing, reg_param=1e-6, normalize=true) where{T,N}
+function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, psf=nothing, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing, reg_param=1e-6, reg_param_p=1e-8, normalize=true, show_quality=false, phase_only=false) where{T,N}
     # @show k_est
     # fdat = nothing
     # RT = real(T)
@@ -571,6 +577,11 @@ function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT
             ft_mask .= fourier_weigths .* correl_mask
         end
     end
+    if phase_only
+        dat = dat ./ (abs.(dat) .+ reg_param_p) # normalize to absolute of one
+        # p_only(x) = ifelse(x == 0, x, x / abs(x))  # makes no difference
+        # dat = p_only.(dat)
+    end
     fdat = ft(dat)
     if !isnothing(ft_mask)
         fdat = fdat .* ft_mask
@@ -580,6 +591,23 @@ function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT
     #end
     if isnothing(k_est)
         k_est = get_pixel_peak_pos(fdat, interactive=interactive, overwrite=overwrite, exclude_zero=exclude_zero)
+    end
+
+    if (show_quality)
+        k_pos = round.(Int, k_est[1]) .+ (size(fdat) .÷ 2 .+ 1)
+        delta_k = 6 .* ones(length(k_pos))
+        peak_height = abs.(fdat[k_pos...])
+        base_height = 0.0
+        for d=1:length(k_pos)
+            k_plus = [k_pos...]; k_plus[d] += delta_k[d]
+            k_minus = [k_pos...]; k_minus[d] -= delta_k[d]
+            base_height += abs.(fdat[k_plus...]) .+ abs.(fdat[k_minus...])
+        end
+        base_height /= 2 .* length(k_pos) # average over the number of dimensions
+        peakcontrast = (peak_height .- base_height) ./ base_height;
+        println("Peak contrast @$k_pos = $peak_height is $peakcontrast")
+        # println("Peak $peak_height")
+        # println("Base $base_height")
     end
 
     if isa(k_est[1], AbstractArray) || isa(k_est[1], Tuple) # Array of positions
@@ -1049,9 +1077,13 @@ The orders `ft_order0` and `ft_shifted_order`, both provided as Fourier transfor
 In a first step, they are pre-filtered to optimize the SNR in their correlation.
 Note that the shift vector `k_shift` needs to be provided with subpixel accuracy.
 """
-function get_rel_subpixel_correl(ft_order0, ft_shifted_order, kshift::NTuple, fwd_psf; fwd_psf2 = conv_psf(fwd_psf, fwd_psf), upsample=true)
+function get_rel_subpixel_correl(ft_order0, ft_shifted_order, kshift::NTuple, fwd_psf; fwd_psf2 = isnothing(fwd_psf) ? nothing : conv_psf(fwd_psf, fwd_psf), upsample=true)
     myexp = exp_ikx_sep(size(ft_order0), shift_by=kshift)
-    fwd_psf2 = fwd_psf2 .* myexp 
+    if isnothing(fwd_psf2)
+        fwd_psf2 = collect(myexp) 
+    else
+        fwd_psf2 .*= myexp 
+    end
     up_shifted_order = prepare_correlation(ft_shifted_order, fwd_psf; upsample=upsample)
     up_order0 = prepare_correlation(ft_order0, fwd_psf; upsample=upsample)
 
@@ -1073,7 +1105,8 @@ function get_rel_subpixel_correl(dat, other, shift_vecs::Vector, psf; upsample=t
 end
 
 """
-    get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=psf, upsample=true)
+
+    get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6, show_quality=false)
 
 returns the subpixel correlation of `dat` with `other` or by default with itself.
 
@@ -1085,10 +1118,24 @@ returns the subpixel correlation of `dat` with `other` or by default with itself
 + `psf`: the point spread function to use for prefiltering the data to correlate. If `nothing` no prefiltering is performed.
     Prefiltering can be useful to reduce noise and also uncorrelated background (if `psf` suppresses low frequencies).
 + `upsample`: if `true` the data is upsampled by a factor of two before correlation. This is necessary to avoid wrap-around effects.
++ `interactive`: if `true`, the user is asked to click on the approximate peak position in the correlation. Only used if `k_est` is `nothing`.
++ `correl_mask`: a mask to multiply to the Fourier-transformed function. This can be used to mask out certain regions in the correlation function.
++ `method`: the method to use for finding the peak in the correlation. Default: `:FindZoomFT`. Other options are:
+    - `:FindIter`: uses an iterative optimization to find the peak.
+    - `:FindWaveFit`: uses a gradient-based fitting of a complex exponential to the input data to find the peak.
+    - `:FindShiftedWindow`: uses a shifted window of the non-fted data to find the peak.
+    - `:FindCOM`: uses a center of mass method to find the peak.
+    - `:FindParabola`: fits a parabola through the integer center along each dimension.
++ `verbose`: if `true`, the optimization will print out information about the optimization process.
++ `reg_param`: a regularization parameter to avoid division by zero in the Fourier space.
++ `show_quality`: if `true`, the peak contrast will be printed out, which is the ratio of the peak height to the base height surrounding the peak.
++ `phase_only`: limits the correlation to the phase only, i.e. the product in Fourier space as represented by `dat` is first normalized to an absolute of one.
+    This yields a phase-only correlation.
++ `reg_param_p`: a regularization parameter to avoid division by zero in the Fourier space, if `phase_only` is true. Default: 1e-8.
 
 returns the subpixel position of the correlation peak and the phase and amplitude of the peak.
 """
-function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6)
+function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6, show_quality=false, phase_only=false, reg_param_p=1e-8)
     if isnothing(other)
         other = dat
     end
@@ -1096,7 +1143,9 @@ function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, up
     up_other = prepare_correlation(other, psf; upsample=upsample)
 
     ftcorrel = up .* conj.(up_other)
-    return find_ft_peak(ftcorrel, k_est; method=method, psf=psf, verbose=verbose, ft_mask=correl_mask, interactive=interactive, reg_param=reg_param)
+    res = find_ft_peak(ftcorrel, k_est; method=method, psf=psf, verbose=verbose, ft_mask=correl_mask, interactive=interactive, reg_param=reg_param, show_quality=show_quality, phase_only=phase_only, reg_param_p=reg_param_p)
+
+    return res
 end
 
 
