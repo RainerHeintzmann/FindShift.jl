@@ -1,11 +1,11 @@
 using Interpolations
 
 function get_val(itp, fct, idx)
-    itp[fct(idx)...]
+    itp(fct(idx)...)
 end
 
 function get_val(itp, idx)
-    itp[idx...]
+    itp(idx...)
 end
 
 function cartesian_to_matrix(ci::CartesianIndices)
@@ -33,7 +33,14 @@ and `fillvalue` is the value to fill in for out-of-bounds values.
 + `interp_type=BSpline(Linear())`: The interpolation type. Default is `BSpline(Linear())`.
 + `fillvalue=0.0`: The value to fill in for out-of-bounds values. Default is NaN.
 
-
+# Example
+```julia
+data = rand(Float32, 100,100)
+α = 30.0 *pi/180
+zoom = 2.0
+ϕ = FindShift.get_rigid_warp((α, zoom, [0.0, 0.0]), size(data))
+res = apply_warp(data, ϕ, size(data), fillvalue=0f0)
+```
 """
 function apply_warp(data::Array{T,D}, fct, dst_size=size(data); interp_type=BSpline(Linear()), fillvalue=T(NaN))::Array{T,D} where {T,D}
     rfct(v) = real(T).(fct(v))
@@ -46,6 +53,41 @@ function apply_warp(data::Array{T,D}, warped_coordinates::AbstractArray; interp_
     return get_val.(Ref(itp), warped_coordinates)
 end
 
+"""
+    apply_tps_warp(data::Array{T,D}, tps, dst_size=size(data), ::Val{PTS}=Val(81); interp_type=BSpline(Linear()), fillvalue=0.0)::Array{T,D} where {T,D, PTS}
+
+this function applies a thin-plate spline warp as defined by the `tps` object to `data`. The `interp_type` determines the interpolation type,
+and `fillvalue` is the value to fill in for out-of-bounds values.
+    The function has the same user interface as the `warp` function from the `RegisterDeformation.jl` package.
+# Arguments
++ `data::Array{T,D}`: The data to be warped.
++ `tps::ThinPlateSpline`: The thin-plate spline object defining the warp.
++ `dst_size=size(data)`: The size of the output array.
++ `::Val{PTS}=Val(81)`: The number of points to use for the TPS basis functions.
++ `interp_type=BSpline(Linear())`: The interpolation type. Default is `BSpline(Linear())`.
++ `fillvalue=T(NaN)`: The value to fill in for out-of-bounds values. Default is NaN.
+
+# Example
+```julia
+data = rand(Float32, 100,100)
+α = 30.0 *pi/180
+zoom = 2.0
+ϕ = FindShift.get_rigid_warp((α, zoom, [0.0, 0.0]), size(data))
+ns = Integer.(1.2.*size(data))
+res = apply_warp(data, ϕ, ns, fillvalue=0f0)
+λ = 0.5
+x1 = [0.0 1.0
+    1.0 0.0
+    1.0 1.0
+    1.0 2.0]
+x2 = [0.0 1.0
+    1.1 0.1
+    1.2 1.5
+    1.3 2.0]
+tps =  FindShift.tps_solve(x1, x2, λ, compute_affine=true)
+res_tps = FindShift.apply_tps_warp(data, tps, ns, Val(4))
+```
+"""
 function apply_tps_warp(data::Array{T,D}, tps, dst_size=size(data), ::Val{PTS}=Val(81); interp_type=BSpline(Linear()), fillvalue=T(NaN))::Array{T,D} where {T,D, PTS}
     # ci = CartesianIndices(dst_size)
     # coords = cartesian_to_matrix(ci)
