@@ -1,7 +1,7 @@
 name = "FindShift"
 uuid = "643ec891-bf64-479f-8088-26ff5ce1b396"
 authors = ["RainerHeintzmann <heintzmann@gmail.com>"]
-version = "0.2.0"
+version = "0.3.0"
 
 [deps]
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
