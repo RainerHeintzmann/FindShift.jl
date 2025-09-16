@@ -78,20 +78,20 @@ end
 @testset "Correlations" begin
     data = Float32.(testimage("resolution_test_512"))
     sz = size(data)
-    psf = abs2.(ift(rr(Float32, sz) .< 100))
-    psf = psf / sum(psf)
+    mypsf = abs2.(ift(rr(Float32, sz) .< 100))
+    mypsf = mypsf / sum(mypsf)
 
     vec_c = [1.4, 2.2, 0.0, 1.0]
     cos_modulation = vec_c[4] .* cos.(vec_c[3] .+ vec_c[1].*(1:sz[1]) .+ vec_c[2].*transpose(1:sz[2])) .+ 1
 
-    perfect_data = conv_psf(data .* cos_modulation, psf)
+    perfect_data = conv_psf(data .* cos_modulation, mypsf)
     noisy_data = perfect_data .+ 0.05 .* randn(Float32, sz)
     # test the correlation
 
     psf_bandpass = nothing # real.(ift(ft(psf) .* (1 .-gaussian_sep(size(psf), sigma=2.0))))
-    vec_pos = vec_c[1:2] .* size(psf)/(2pi)
-    highpass = rr(size(psf).*2, offset=size(psf) .+ 1 .+ vec_pos) .< 50 # gaussian_sep(size(psf).*2, sigma=55.0)
-    # highpass = rr(size(psf).*2) .> 50 # gaussian_sep(size(psf).*2, sigma=55.0)
+    vec_pos = vec_c[1:2] .* size(mypsf)/(2pi)
+    highpass = rr(size(mypsf).*2, offset=size(mypsf) .+ 1 .+ vec_pos) .< 50 # gaussian_sep(size(mypsf).*2, sigma=55.0)
+    # highpass = rr(size(mypsf).*2) .> 50 # gaussian_sep(size(mypsf).*2, sigma=55.0)
 
     corr_res_k, correl_res_p, correl_res_a = get_subpixel_correl(noisy_data; other=nothing, k_est=nothing, psf=psf_bandpass, upsample=true, correl_mask = highpass)
     @test isapprox([corr_res_k[1:2]...], vec_pos, rtol=1e-2)
