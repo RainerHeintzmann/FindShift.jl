@@ -417,7 +417,13 @@ function lsq_fit_sin(dat, k_init, phase_init=0f0, amp_init=1f0, exclude_zero=tru
     init_vec = [(Float32.(k_init))..., phase_init, amp_init]
     # @show init_vec
     # @show fg!(1, nothing, init_vec)
-    res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=10))
+    # res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=10))
+    # do the optimization with LBGFS using modern Optim API (f, g!)
+    # New Optim 2 Interface:
+    f(x) = fg!(true, nothing, x)
+    g!(G, x) = fg!(nothing, G, x)
+    res = Optim.optimize(f, g!, init_vec, LBFGS(), Optim.Options(iterations=10))
+
     print(res)
     res = Optim.minimizer(res)
     k_res = res[1:end-2]
@@ -497,7 +503,12 @@ function lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0, maxiter=10; 
     init_vec = [(Float32.(k_init))..., phase_init, amp_init]
     # @show init_vec
     # @show fg!(1, nothing, init_vec)
-    res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=maxiter, show_trace=verbose))
+    # res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=maxiter, show_trace=verbose))
+    # New Optim 2 Interface:
+    f(x) = fg!(true, nothing, x)
+    g!(G, x) = fg!(nothing, G, x)
+    res = Optim.optimize(f, g!, init_vec, LBFGS(), Optim.Options(iterations=maxiter, show_trace=verbose))
+
     # print(res)
     res = Optim.minimizer(res)
     k_res = res[1:end-2]
