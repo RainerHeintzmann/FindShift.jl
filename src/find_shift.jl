@@ -6,7 +6,7 @@
 
 Abstract supertype for all FindMethod types.
 
-See [`FindZoomFT`](@ref), [`FindIterative`](@ref).
+See [`FindZoomFT`](@ref), [`FindIter`](@ref).
 """
 abstract type FindMethod end 
 
@@ -40,7 +40,7 @@ function dist_anscombe(dat1, dat2)
 end
 
 """
-    find_ft_shift_iter(fdat1, fdat2, Δx=nothing; max_range=nothing, verbose=false, mynorm=dist_sqr)
+    find_ft_shift_iter(fdat1::AbstractArray{T,N}, fdat2::AbstractArray{T,N}; max_range=nothing, verbose=false, mynorm=dist_sqr, normalize_variance=true) where {T,N}
 
 finds the shift between two input images by minimizing the distance.
 To be fast, this distance is calculated in Fourierspace using Parseval's theorem.
@@ -50,6 +50,14 @@ Returned is an estimate of the real space (subpixel) shift.
 The first image is interpreted as the ground truth, whereas the second as a measurement
 described by the distance norm `mynorm`. 
 returned is the shift vector.
+
+# Parameters
++ fdat1: first data in Fourierspace to correlate
++ fdat2: second data in Fourierspace to correlate
++ max_range: limits the range
++ verbose: if `true` information is printed
++ mynorm: the norm function to use. Default is `dist_sqr`
++ normalize_variance: Should the variance be normalized (default is `true`)
 """
 function find_ft_shift_iter(fdat1::AbstractArray{T,N}, fdat2::AbstractArray{T,N}; max_range=nothing, verbose=false, mynorm=dist_sqr, normalize_variance=true) where {T,N}
     # loss(v) = mynorm(fdat1, v[1].*exp_shift_dat(fdat2,v[2:end])) 
@@ -295,6 +303,7 @@ function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true,
     RT = real(T)
     win = collect(window_hanning(Float32, size(dat), border_in=0.0))
     wdat = win .* dat 
+    # wdat = dat .* window_hanning(Float32, size(dat), border_in=0.0)
 
     k_est = let
         if isnothing(k_est)
@@ -345,7 +354,7 @@ function find_ft_iter(dat::AbstractArray{T,N}, k_est=nothing; exclude_zero=true,
     end
     # Optim.minimizer(res), mynorm(Optim.minimizer(res))
     # @show res
-    k_res = res.minimizer
+    k_res = Tuple(Float64.(res.minimizer)) # This is necessary to return the same datatype for all :FindSomething tags
     peak_cpx = sum_exp_shift(dat, k_res)
     return k_res, angle(peak_cpx), abs.(peak_cpx) ./ length(dat)
 end
@@ -576,7 +585,11 @@ Returned is a tuple of vector of the peak position in Fourier-space as well as t
 + `reg_param`: a regularization parameter to avoid division by zero in the Fourier space. This is only used if `psf` is provided.
 + `reg_param_p`: a regularization parameter to avoid division by zero in the Fourier space, if `phase_only` is true. Default: 1e-8.
 """
-function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, psf=nothing, interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing, reg_param=1e-6, reg_param_p=1e-8, normalize=true, show_quality=false, phase_only=false) where{T,N}
+function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT, psf=nothing, 
+                    interactive=false, overwrite=true, exclude_zero=true, max_range=nothing, 
+                    scale=40, abs_first=false, roi_size=5, verbose=false, ft_mask=nothing, 
+                    reg_param=1e-6, reg_param_p=1e-8, normalize=true, show_quality=false, 
+                    phase_only=false) where{T,N}
     # @show k_est
     # fdat = nothing
     # RT = real(T)
@@ -685,7 +698,6 @@ end
                 Note that this does not work well for very narrow peaks.
     `:FindParabola`: Uses an FFT and uses a 3x3x... region to localize its absolute value via fitting a parbola through the integer center along each dimension.
                 Note that this does not work well for very narrow peaks.
-    `:FindShiftedWindow`: Uses a shifted window of the non-fted data to find the peak.
 
 + dat:  data in real space, which will be Fourier transformed
 + fdat: the Fourier-transformed data. If `nothing` is provided, the Fourier transform will be calculated (if needed).
@@ -744,7 +756,7 @@ function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_
     elseif method == :FindShiftedWindow # uses a shifted window of the non-fted data to find the peak.
         return subpixel_kg(dat, k_est)
     else
-        error("Unknown method for localizing peak. Use :FindZoomFT or :FindIter")
+        error("Unknown method for localizing peak. Use :FindZoomFT, :FindIter, :FindCOM, :FindWaveFit, :FindParabola or :FindShiftedWindow")
     end
 end
 
@@ -960,7 +972,8 @@ function prepare_correlation(dat, psf=nothing; upsample=true)
     end
     up = let
         if upsample
-                up = zeros(size(dat,1)*2, size(dat,2)*2, size(dat,3))
+                nsz = (size(dat,1)*2, size(dat,2)*2, size(dat,3))
+                up = similar(dat, nsz)
                 for n=1:size(dat,3)
                     up[:,:,n] .= upsample2(dat[:,:,n])
                 end
@@ -1143,10 +1156,12 @@ returns the subpixel correlation of `dat` with `other` or by default with itself
 + `phase_only`: limits the correlation to the phase only, i.e. the product in Fourier space as represented by `dat` is first normalized to an absolute of one.
     This yields a phase-only correlation.
 + `reg_param_p`: a regularization parameter to avoid division by zero in the Fourier space, if `phase_only` is true. Default: 1e-8.
++ `scale`: only needed for :FindZoomFt, determines the zoom factor and therefore the precision of the result.
++ `roi_size`: only needed for :FindZoomFt, determines the roi to extract before zooming into the correlation. If the zoom is large and the ROI-size small, this will be slow!
 
 returns the subpixel position of the correlation peak and the phase and amplitude of the peak.
 """
-function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6, show_quality=false, phase_only=false, reg_param_p=1e-8)
+function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6, show_quality=false, phase_only=false, reg_param_p=1e-8, scale=80, roi_size=2)
     if isnothing(other)
         other = dat
     end
@@ -1154,7 +1169,7 @@ function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, up
     up_other = prepare_correlation(other, psf; upsample=upsample)
 
     ftcorrel = up .* conj.(up_other)
-    res = find_ft_peak(ftcorrel, k_est; method=method, psf=psf, verbose=verbose, ft_mask=correl_mask, interactive=interactive, reg_param=reg_param, show_quality=show_quality, phase_only=phase_only, reg_param_p=reg_param_p)
+    res = find_ft_peak(ftcorrel, k_est; method=method, psf=psf, verbose=verbose, ft_mask=correl_mask, interactive=interactive, reg_param=reg_param, show_quality=show_quality, phase_only=phase_only, reg_param_p=reg_param_p, scale=scale, roi_size=roi_size)
 
     return res
 end
