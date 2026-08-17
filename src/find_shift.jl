@@ -689,6 +689,7 @@ end
 
     finds a peak in Fourier space using various strategies. Some need FFTs and others not.
 + method: defines which method to use for finding the maximum. Current options:
+    `:FindMax`: Returns the Fourier-maximum directly with one pixel precision.
     `:FindZoomFT`:  Uses a chirp Z transformation to zoom into the peak. 
     `:FindIter`:    Uses an iterative optimization via FFT-shift operations to find the peak.
     `:FindWaveFit`: Uses a gradient-based fitting of a complex exponential to the input data to find the peak.
@@ -713,7 +714,11 @@ end
 """
 function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_range=nothing, scale=40, abs_first=false, roi_size=5, verbose=false, normalize=true)
     # @show k_est
-    if method == :FindCOM # center of mass based determination of the maximum
+    if method == :FindMax # simply returns the result with one Fourier-pixel precision.
+        k_pos = k_est .+ size(fdat).÷2 .+1
+        peak_cpx = fdat[k_pos...];
+        return k_est, angle(peak_cpx), (abs.(peak_cpx) ./ length(dat))
+    elseif method == :FindCOM # center of mass based determination of the maximum
         if isnothing(fdat)
             fdat = ft(dat)
         end
