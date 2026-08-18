@@ -538,7 +538,8 @@ returned is a tuple of the pixel position(s) of the peak (each a Tuple).
 """
 function get_pixel_peak_pos(fdat; interactive=false, overwrite=true, exclude_zero=true)
     if interactive
-        pos = get_positions(Float32.(abs.(fdat)), overwrite=overwrite)
+        View5D = Base.require(@__MODULE__, :View5D)
+        pos = View5D.get_positions(Float32.(abs.(fdat)), overwrite=overwrite)
         pos = Tuple((round.(Int, (p .- (size(fdat).÷ 2 .+1)))...,) for p in pos)
         # pos = find_max(abs2.(fdat), exclude_zero=exclude_zero)
         pos
