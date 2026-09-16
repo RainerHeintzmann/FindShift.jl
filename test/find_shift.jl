@@ -111,7 +111,7 @@ end
   dats = cat((shift(dat, .- sh[d]) for d=1:N)..., dims=3);
   dat_aligned, shifts = align_stack(dats);
   @test size(dat_aligned) == size(dats)
-  @test size(shifts[1]) == (3,)
+  @test length(shifts[1]) == 3
   myerr = [abs.(shifts[d][1:2] .- sh[d]) for d in 1:length(sh)]
 
   @test all(maximum(myerr) .< 0.01)

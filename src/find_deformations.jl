@@ -30,11 +30,14 @@ end
 
 
 """
-    find_deformations(fixed, movings, grid_size=(5,5); patch_size=max.(size(fixed) .÷ grid_size,5), tolerance = max.(size(fixed) .÷ grid_size,5), pre_transform_params=nothing)
+    find_deformations(fixed, movings, grid_size=(5,5); patch_size=max.(size(fixed) .÷ grid_size,5), tolerance = max.(size(fixed) .÷ grid_size,5), pre_transform_params=nothing, shift_fun=find_shift_iter)
     determines the warps between a refrence image `fixed` and one or multiple images `moving` to align to that reference image.
 
+`shift_fun` determines the per-patch shift-estimation method. It must have the signature `shift_fun(pr, ps) -> Δx` (same
+contract as [`find_shift_iter`](@ref)). The default `find_shift_iter` is a Fourier/Optim-based estimator; [`find_shift_lk`](@ref)
+(classical Lucas-Kanade) is a gradient-based alternative that can be passed in instead.
 """
-function find_deformations(fixed, movings, grid_size=(11, 11); average_pos=false, extra_shift=(0.25,0.25), patch_size=max.(size(fixed) .÷ grid_size,5), tolerance = max.(size(fixed) .÷ grid_size,5), pre_transform_params=nothing, avoid_border=false, warn_norm=10.0)
+function find_deformations(fixed, movings, grid_size=(11, 11); average_pos=false, extra_shift=(0.25,0.25), patch_size=max.(size(fixed) .÷ grid_size,5), tolerance = max.(size(fixed) .÷ grid_size,5), pre_transform_params=nothing, avoid_border=false, warn_norm=10.0, shift_fun=find_shift_iter)
     nodes = get_default_markers(fixed, grid_size)
     ref_patches, markers = extract_patches(fixed, patch_size=patch_size; grid_size=grid_size, avoid_border=avoid_border)
 
@@ -66,7 +69,7 @@ function find_deformations(fixed, movings, grid_size=(11, 11); average_pos=false
             if ci == cn # only calculate shift where needed and copy the border shifts
                 pr = ref_patches[n]
                 ps = search_in[n]
-                myshift = find_shift_iter(pr, ps)
+                myshift = shift_fun(pr, ps)
                 if norm(myshift) > warn_norm
                     @warn "large shift $(norm(myshift))>$(warn_norm) at postion $(ci) of $(grid_size)."
                 end
@@ -168,9 +171,10 @@ Returned is a tuple of the aligned images and a vector of warps to perform the t
 + `patch_size`:     the size of each patch in the (first) reference image to compare
 + `tolerance`:     the extra size that the patches of the images to align get as search space. Usually this can be kept small.
 + `avoid_border`:   if `true` the no alignment for the border patches will be determined but the neighbour parameters (after rigid alignment) will be used instead
-+ `warn_norm`:     a shift distance (in pixels) after pre-alignment above which a warning will be issued. 
++ `warn_norm`:     a shift distance (in pixels) after pre-alignment above which a warning will be issued.
++ `shift_fun`:     the per-patch shift-estimation function to use, see [`find_deformations`](@ref). Default: `find_shift_iter`; [`find_shift_lk`](@ref) is a Lucas-Kanade based alternative.
 """
-function align_images(img_list; average_pos=true, extra_shift=(0.25, 0.25), no_filter=false, band_pass_freq=0.25, band_pass_low=nothing, band_pass_high=nothing, grid_size=(10,10), patch_size=max.(size(img_list[1]) .÷ grid_size,5), tolerance=max.(size(img_list[1]) .÷ grid_size,5), avoid_border=false, warn_norm=10.0)
+function align_images(img_list; average_pos=true, extra_shift=(0.25, 0.25), no_filter=false, band_pass_freq=0.25, band_pass_low=nothing, band_pass_high=nothing, grid_size=(10,10), patch_size=max.(size(img_list[1]) .÷ grid_size,5), tolerance=max.(size(img_list[1]) .÷ grid_size,5), avoid_border=false, warn_norm=10.0, shift_fun=find_shift_iter)
 
     reference = nothing;
     movings = nothing;
@@ -192,7 +196,7 @@ function align_images(img_list; average_pos=true, extra_shift=(0.25, 0.25), no_f
     rigidly_aligned, params = fourier_mellin_align(reference, movings)
     # return rigidly_aligned, params
 
-    warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:end], grid_size, average_pos=average_pos, extra_shift =extra_shift, patch_size=patch_size, pre_transform_params=params[2:end], avoid_border=avoid_border, tolerance=tolerance, warn_norm=warn_norm)
+    warps = find_deformations(rigidly_aligned[1], rigidly_aligned[2:end], grid_size, average_pos=average_pos, extra_shift =extra_shift, patch_size=patch_size, pre_transform_params=params[2:end], avoid_border=avoid_border, tolerance=tolerance, warn_norm=warn_norm, shift_fun=shift_fun)
     # all_aligned = [replace_nan(apply_warp(img_list[n], warps[n])) for n=1:length(img_list)]
     all_aligned = [replace_nan(apply_warp(img_list[n], warps[n])) for n in eachindex(img_list)]
     return all_aligned, warps 
