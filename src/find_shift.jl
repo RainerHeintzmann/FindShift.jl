@@ -506,7 +506,7 @@ function lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0, maxiter=10; 
     normfac = 1
     if normalize
         normfac = mean(abs.(dat))
-        dat ./= normfac
+        dat = dat ./ normfac  # not in place: the caller's data (e.g. several peaks of one correlation) must stay unchanged
         amp_init /= normfac
     end
     init_vec = [(Float32.(k_init))..., phase_init, amp_init]
@@ -595,12 +595,13 @@ function find_ft_peak(dat::AbstractArray{T,N}, k_est=nothing; method=:FindZoomFT
     # fdat = nothing
     # RT = real(T)
     #if isnothing(fdat)
-    if !isnothing(psf)
+    if !isnothing(psf) && !isnothing(ft_mask)
+        # A mask given together with a PSF is weighted with the regularized
+        # inverse of the PSF's squared OTF. (This used to write into the caller's
+        # mask and referred to an undefined `correl_mask`, i.e. it threw.)
         fourier_weigths = ft(abs2.(psf))
         fourier_weigths = conj.(fourier_weigths)./(abs2.(fourier_weigths) .+ reg_param)
-        if !isnothing(ft_mask)
-            ft_mask .= fourier_weigths .* correl_mask
-        end
+        ft_mask = ft_mask .* fourier_weigths
     end
     if phase_only
         dat = dat ./ (abs.(dat) .+ reg_param_p) # normalize to absolute of one
@@ -664,7 +665,7 @@ function get_com(fdat, k_est) # should one use abs or abs2?
     for ci in CartesianIndices(size(ROI))
         t = t .+ Tuple(ci) .* ROI[ci]
     end
-    return (t./sum(ROI)) .- 2 .+ k_est
+    return Float64.((t./sum(ROI)) .- 2 .+ k_est)  # a concrete NTuple of Float64, like the other methods
 end
 
 function get_parabola_max(fdat, k_est) # should one use abs or abs2?
@@ -755,10 +756,8 @@ function find_peak(dat, fdat, k_est; method=:FindZoomFT, exclude_zero=true, max_
         phase_init = angle(val)
         amp_init = abs(val) / length(dat)
         res = lsq_fit_exp_ikx(dat, .-k_est, phase_init, amp_init, verbose=verbose, normalize=normalize);
-        # @show typeof(fdat)
-        # @show typeof(res)
-        res[1] .= .- res[1]
-        return res # return the full information
+        # same form as the other methods: (k::NTuple{N,Float64}, phase, amplitude)
+        return Tuple(Float64.(.-res[1])), res[2], res[3]
     elseif method == :FindShiftedWindow # uses a shifted window of the non-fted data to find the peak.
         return subpixel_kg(dat, k_est)
     else
@@ -1164,10 +1163,14 @@ returns the subpixel correlation of `dat` with `other` or by default with itself
 + `reg_param_p`: a regularization parameter to avoid division by zero in the Fourier space, if `phase_only` is true. Default: 1e-8.
 + `scale`: only needed for :FindZoomFt, determines the zoom factor and therefore the precision of the result.
 + `roi_size`: only needed for :FindZoomFt, determines the roi to extract before zooming into the correlation. If the zoom is large and the ROI-size small, this will be slow!
++ `normalize_overlap`: if `true`, the correlation is divided by its envelope `E(s) = Σ_q |U(q)| |V(q-s)|`
+    (`U`, `V`: spectra of `dat` and `other`) before the peak is located. This removes the bias towards zero
+    shift that arises when the spectral overlap shrinks with the shift (e.g. OTF-limited SIM data with a
+    peak beyond the OTF cutoff). The returned amplitude is then that of the normalized correlation. Default: `false`.
 
 returns the subpixel position of the correlation peak and the phase and amplitude of the peak.
 """
-function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6, show_quality=false, phase_only=false, reg_param_p=1e-8, scale=80, roi_size=2)
+function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, upsample=true, interactive=false, correl_mask=nothing, method=:FindZoomFT, verbose=false, reg_param=1e-6, show_quality=false, phase_only=false, reg_param_p=1e-8, scale=80, roi_size=2, normalize_overlap=false)
     if isnothing(other)
         other = dat
     end
@@ -1175,6 +1178,15 @@ function get_subpixel_correl(dat;  other=nothing, k_est=nothing, psf=nothing, up
     up_other = prepare_correlation(other, psf; upsample=upsample)
 
     ftcorrel = up .* conj.(up_other)
+    if normalize_overlap
+        # Divide the correlation (a function of the shift s) by its envelope
+        # E(s) = sum_q |U(q)| |V(q - s)| of the two spectra U, V. When their overlap
+        # shrinks with the shift (e.g. band-limited, OTF-weighted data), the plain
+        # correlation is pulled towards zero shift and its maximum is biased.
+        fcorrel = ft(ftcorrel)
+        envelope = abs.(ft(ift(abs.(ft(up))) .* conj.(ift(abs.(ft(up_other))))))
+        ftcorrel = ift(fcorrel ./ (envelope .+ 1e-6 * maximum(envelope)))
+    end
     res = find_ft_peak(ftcorrel, k_est; method=method, psf=psf, verbose=verbose, ft_mask=correl_mask, interactive=interactive, reg_param=reg_param, show_quality=show_quality, phase_only=phase_only, reg_param_p=reg_param_p, scale=scale, roi_size=roi_size)
 
     return res
