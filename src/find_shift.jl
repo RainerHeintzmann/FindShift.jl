@@ -497,33 +497,47 @@ Parameters:
 + dat: input data to fit amp * sin(k x + phase) to.
 + k_init: a preexisting estimate of the shift_by argument of the sine function. This relates to k via
 k = k_init .* 2pi ./ size(dat)
-+ phase_init: the initial phase of the fit 
-+ amp_init: the initial amplitude of the fit 
++ phase_init: the initial phase of the fit (unused: phase and amplitude follow analytically from k, see below)
++ amp_init: the initial amplitude of the fit (unused, as `phase_init`)
+
+Only `k` is optimized. For a fixed `k` the model `A * exp(i k x)` is linear in the complex amplitude
+`A = amp * exp(i phase)`, so its least-squares optimum is analytic: `A = <exp(i k x), dat> / N`
+(the projection of the data onto the wave). Inserting it leaves the loss `sum(abs2, dat) - abs2(A) * N`,
+whose minimum over `k` is exactly the minimum of the joint fit over (k, phase, amp) ("variable
+projection"): the analytically determined phase and amplitude ARE the fit result. Fitting all four
+parameters jointly instead is badly conditioned (the gradient in k scales with amp) and tended to
+shrink the amplitude without moving `k`.
 """
 function lsq_fit_exp_ikx(dat, k_init, phase_init=0f0, amp_init=1f0, maxiter=10; verbose=false, normalize=true)
-    fg! = get_exp_ikx_fit_fg!(dat)
-
     normfac = 1
     if normalize
         normfac = mean(abs.(dat))
         dat = dat ./ normfac  # not in place: the caller's data (e.g. several peaks of one correlation) must stay unchanged
-        amp_init /= normfac
     end
-    init_vec = [(Float32.(k_init))..., phase_init, amp_init]
-    # @show init_vec
-    # @show fg!(1, nothing, init_vec)
-    # res = optimize(Optim.only_fg!(fg!), init_vec, LBFGS(), Optim.Options(iterations=maxiter, show_trace=verbose))
-    # New Optim 2 Interface:
-    f(x) = fg!(true, nothing, x)
-    g!(G, x) = fg!(nothing, G, x)
-    res = Optim.optimize(f, g!, init_vec, LBFGS(), Optim.Options(iterations=maxiter, show_trace=verbose))
+    fg! = get_exp_ikx_fit_fg!(dat)  # after the normalization, so that it fits the normalized data
 
-    # print(res)
-    res = Optim.minimizer(res)
-    k_res = res[1:end-2]
-    phi_res = res[end-1]
-    a_res = res[end] * normfac
-    return k_res, phi_res, a_res
+    # Optimal phase and amplitude for a given k: the projection onto the model wave (|exp(ikx)| = 1).
+    function phase_amp(k)
+        proj = sum(dat .* conj.(collect(exp_ikx_sep(size(dat), shift_by=k))))
+        return angle(proj), abs(proj) / length(dat)
+    end
+    # Loss and k-gradient at the optimal phase and amplitude. By the envelope theorem the gradient of
+    # this reduced loss is the k-part of the full gradient (the phase and amplitude parts vanish there).
+    function f(k)
+        phi, a = phase_amp(k)
+        return fg!(true, nothing, [k..., phi, a])
+    end
+    function g!(G, k)
+        phi, a = phase_amp(k)
+        G_full = similar(k, length(k) + 2)
+        fg!(nothing, G_full, [k..., phi, a])
+        G .= G_full[1:length(k)]
+    end
+    res = Optim.optimize(f, g!, Float32.(collect(k_init)), LBFGS(), Optim.Options(iterations=maxiter, show_trace=verbose))
+
+    k_res = Optim.minimizer(res)
+    phi_res, a_res = phase_amp(k_res)
+    return k_res, phi_res, a_res * normfac
 end
 
 """
