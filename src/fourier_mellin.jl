@@ -44,8 +44,10 @@ function fourier_mellin(img1::AbstractArray{T,N}, img2::AbstractArray{T,N}; radi
 
     img1 = FindShift.make_even(img1)
     img2 = FindShift.make_even(img2)
-    f1 = abs.(nfft_nd(img1, fm_map, szt)) 
-    f2 = abs.(nfft_nd(img2, fm_map, szt)) 
+    isdefined(FourierTools, :nfft_nd) ||
+        error("fourier_mellin needs FourierTools.nfft_nd (NFFT), which this FourierTools version does not provide.")
+    f1 = abs.(FourierTools.nfft_nd(img1, fm_map, szt)) 
+    f2 = abs.(FourierTools.nfft_nd(img2, fm_map, szt)) 
     # f_one = abs.(nfft_nd(ones(size(img1)), fm_map, szt)) 
 
     # sfac = log(0.5^2) - log(2/szt[1]^2)

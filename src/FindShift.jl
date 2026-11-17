@@ -7,7 +7,8 @@ homography and non-rigid (patch-based) transforms.
 module FindShift
 using FourierTools, IndexFunArrays, NDTools, LinearAlgebra, ChainRulesCore, Statistics
 using Optim, Zygote # for iterative optimization of positions
-using FFTW
+# FFT interface only; the FFT library (FFTL in the apps, cuFFT for CuArrays) is loaded by the application.
+using AbstractFFTs
 using StaticArrays # for fast arrays
 # using RegisterDeformation  # only used for the warp function, which should be replaced by Interpolations.jl
 using ThinPlateSplines # for the TPS deformation
